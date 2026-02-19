@@ -1,10 +1,12 @@
 {
-    "name": "CrowFX.Editor",
-    "rootNamespace": "",
+    "name": "CrowFX.EditorTools",
+    "rootNamespace": "CrowFX",
     "references": [
-        "GUID:b54575e62fb48114189264585eb29d03"
+        "GUID:9c468bcdc8b9d6544a8ec53f4f7984ae"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
