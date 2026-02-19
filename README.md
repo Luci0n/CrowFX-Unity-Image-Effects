@@ -49,7 +49,7 @@ https://github.com/Luci0n/CrowFX-unity-image-effects.git
 
 **Option B — Unity Package**
 
-Download the `.unitypackage` from the [Releases](https://github.com/Luci0n/CrowFX-unity-image-effects/releases) page and import it via `Assets > Import Package > Custom Package`.
+Download the `.unitypackage` from the [Releases](https://github.com/Luci0n/CrowFX-unity-image-effects/releases) page and import it via `Assets > Import Package > Custom Package` (or just double-click the file).
 
 ---
 
@@ -63,7 +63,6 @@ Add the `CrowImageEffects` component to any camera. All effects are controlled f
 - **Star** any section to pin it to the top of the inspector
 - Use the **search bar** to filter settings by name
 - The **summary bar** shows key active values at a glance
-- Shaders are auto-assigned by name — no manual wiring needed
 
 ---
 ## Examples
