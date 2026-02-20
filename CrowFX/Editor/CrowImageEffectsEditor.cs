@@ -6,36 +6,29 @@ using System.Reflection;
 using UnityEditor;
 using UnityEditor.AnimatedValues;
 using UnityEngine;
-using UnityEditor.PackageManager;
 using System.IO;
-using CrowFX;
+using CrowFX.Helpers;
 
 namespace CrowFX.EditorTools
 {
-[CustomEditor(typeof(CrowImageEffects))]
+    [CustomEditor(typeof(CrowImageEffects))]
     public sealed class CrowImageEffectsEditor : Editor
     {
         // =============================================================================================
         // AUTO SECTION MODEL
         // =============================================================================================
-        private sealed class SectionDef
-        {
-            public string Key;
-            public string Title;
-            public string Icon;
-            public string Hint;
-            public int Order;
-            public AnimBool Fold;
-            public Action Draw; // if null => auto-draw
-
-            public SectionDef(string key) { Key = key; Title = key; Icon = "d_Settings"; Hint = ""; Order = 0; }
-        }
 
         private readonly Dictionary<string, List<string>> _propsBySection = new(StringComparer.Ordinal);
         private readonly Dictionary<string, AnimBool> _foldBySection = new(StringComparer.Ordinal);
+        private readonly Dictionary<AnimBool, string> _prefKeyByFold = new();
         private readonly HashSet<string> _drawnThisSection = new(StringComparer.Ordinal);
-        private readonly List<SectionDef> _sections = new();
-
+        private readonly List<CrowFxSectionsModel.SectionDef> _sections = new();
+        private readonly struct EnabledScope : IDisposable
+        {
+            private readonly bool _previousState;
+            public EnabledScope(bool enabled) { _previousState = GUI.enabled; GUI.enabled = enabled; }
+            public void Dispose() => GUI.enabled = _previousState;
+        }
         // Custom UI extras
         private AnimBool _foldResolutionPresets;
 
@@ -49,6 +42,7 @@ namespace CrowFX.EditorTools
         private AnimBool _foldBleedSafety;
         private AnimBool _foldBleedWobble;
         private AnimBool _foldJitterAdvanced;
+        private AnimBool _foldJitterHashNoise;
 
         private readonly List<AnimBool> _allFolds = new();
 
@@ -102,7 +96,14 @@ namespace CrowFX.EditorTools
             var path = $"{RootFromThisScript}/{relativeToRoot}".Replace("\\", "/");
             return AssetDatabase.LoadAssetAtPath<T>(path);
         }
+        private Texture _collapseAllIcon;
+        private Texture _expandAllIcon;
 
+        private Texture GetCollapseAllIcon()
+            => _collapseAllIcon ??= CrowFxEditorUI.IconCache.Get("d_Folder Icon");
+        private Texture GetExpandAllIcon()
+            => _expandAllIcon ??= CrowFxEditorUI.IconCache.Get("d_FolderOpened Icon");
+        
         private Texture2D _diceIcon;
         private Texture2D GetDiceIcon()
             => _diceIcon != null ? _diceIcon : (_diceIcon = LoadAssetAt<Texture2D>("Editor/Icons/dice_icon.png"));
@@ -118,200 +119,6 @@ namespace CrowFX.EditorTools
         // Favorites
         private HashSet<string> _favoriteSections = new(StringComparer.Ordinal);
         private const string Pref_Favorites = "CrowImageEffectsEditor.Favorites";
-
-        // =============================================================================================
-        // THEME / STYLES (your existing look preserved)
-        // =============================================================================================
-        private static class Theme
-        {
-            public static readonly Color PanelBackground   = new Color(0.13f, 0.13f, 0.13f, 1f);
-            public static readonly Color HeaderBackground  = new Color(0.16f, 0.16f, 0.16f, 1f);
-            public static readonly Color BorderColor       = new Color(0f, 0f, 0f, 0.35f);
-            public static readonly Color DividerColor      = new Color(1f, 1f, 1f, 0.06f);
-            public static readonly Color TextPrimary       = new Color(1f, 1f, 1f, 0.86f);
-            public static readonly Color TextSecondary     = new Color(1f, 1f, 1f, 0.70f);
-            public static readonly Color HintBackground    = new Color(0f, 0f, 0f, 0.3f);
-            public static readonly Color WarningBackground = new Color(1f, 1f, 1f, 0.065f);
-            public static readonly Color ErrorBackground   = new Color(1f, 1f, 1f, 0.085f);
-            public static readonly Color ButtonNormal      = new Color(1f, 1f, 1f, 0.055f);
-            public static readonly Color ButtonHover       = new Color(1f, 1f, 1f, 0.085f);
-            public static readonly Color ButtonActive      = new Color(1f, 1f, 1f, 0.12f);
-
-            public static void DrawBorder(Rect rect)
-            {
-                if (Event.current.type != EventType.Repaint) return;
-                EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, 1f), BorderColor);
-                EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 1f, rect.width, 1f), BorderColor);
-                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 1f, rect.height), BorderColor);
-                EditorGUI.DrawRect(new Rect(rect.xMax - 1f, rect.y, 1f, rect.height), BorderColor);
-            }
-
-            public static void DrawDivider(float padding = 2f)
-            {
-                var rect = GUILayoutUtility.GetRect(0f, 1f, GUILayout.ExpandWidth(true));
-                rect.xMin += padding;
-                rect.xMax -= padding;
-
-                if (Event.current.type == EventType.Repaint)
-                    EditorGUI.DrawRect(rect, DividerColor);
-            }
-        }
-
-        private static class Styles
-        {
-            private static bool _initialized;
-            private static Font _appliedFont;
-            public static Texture2D PanelTexture;
-            public static Texture2D HeaderTexture;
-
-            public static GUIStyle Panel;
-            public static GUIStyle HeaderLabel;
-            public static GUIStyle HeaderHint;
-            public static GUIStyle SectionTitle;
-            public static GUIStyle SummaryText;
-            public static GUIStyle HintText;
-            public static GUIStyle PillButton;
-            public static GUIStyle ResetButton;
-            public static GUIStyle SubHeaderLabel;
-
-            public static GUIStyle SearchField;
-            public static GUIStyle SearchCancel;
-            public static void ApplyFont(Font font)
-            {
-                if (font == null || font == _appliedFont) return;
-                _appliedFont = font;
-
-                HeaderLabel.font    = font;
-                SubHeaderLabel.font = font;
-                SectionTitle.font   = font;
-                SummaryText.font    = font;
-                HintText.font       = font;
-                HeaderHint.font     = font;
-                PillButton.font     = font;
-                ResetButton.font    = font;
-            }
-            public static void Ensure()
-            {
-                if (_initialized) return;
-
-                PanelTexture  = CreateColorTexture(Theme.PanelBackground);
-                HeaderTexture = CreateColorTexture(Theme.HeaderBackground);
-
-                Panel = new GUIStyle(EditorStyles.helpBox)
-                {
-                    padding = new RectOffset(10, 10, 8, 10),
-                    margin = new RectOffset(0, 0, 6, 6),
-                    normal = { background = PanelTexture }
-                };
-
-                HeaderLabel = new GUIStyle(EditorStyles.label)
-                {
-                    fontSize = 12,
-                    alignment = TextAnchor.MiddleLeft,
-                    normal = { textColor = Color.white }
-                };
-
-                SubHeaderLabel = new GUIStyle(EditorStyles.label)
-                {
-                    fontSize = 11,
-                    alignment = TextAnchor.MiddleLeft,
-                    normal = { textColor = Color.white }
-                };
-
-                HeaderHint = new GUIStyle(EditorStyles.miniLabel)
-                {
-                    alignment = TextAnchor.MiddleRight,
-                    richText = true,
-                    normal = { textColor = Theme.TextSecondary }
-                };
-
-                SectionTitle = new GUIStyle(EditorStyles.boldLabel)
-                {
-                    fontSize = 13,
-                    alignment = TextAnchor.MiddleLeft,
-                    normal = { textColor = Color.white }
-                };
-
-                SummaryText = new GUIStyle(EditorStyles.miniLabel)
-                {
-                    richText = true,
-                    normal = { textColor = Theme.TextPrimary }
-                };
-
-                HintText = new GUIStyle(EditorStyles.miniLabel)
-                {
-                    wordWrap = true,
-                    richText = true,
-                    normal = { textColor = Theme.TextPrimary }
-                };
-
-                PillButton = new GUIStyle(EditorStyles.label)
-                {
-                    alignment = TextAnchor.MiddleCenter,
-                    padding = new RectOffset(10, 10, 0, 0),
-                    fontSize = 11,
-                    normal = { textColor = Theme.TextPrimary }
-                };
-
-                ResetButton = new GUIStyle(PillButton)
-                {
-                    fontSize = 12,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = Color.white }
-                };
-
-                // Unity builtin styles (keep it native-feeling)
-                SearchField = GUI.skin.FindStyle("ToolbarSearchTextField") ?? EditorStyles.textField;
-                SearchCancel = GUI.skin.FindStyle("ToolbarSearchCancelButton") ?? GUI.skin.button;
-
-                _initialized = true;
-            }
-
-            private static Texture2D CreateColorTexture(Color color)
-            {
-                var texture = new Texture2D(1, 1, TextureFormat.RGBA32, false)
-                {
-                    hideFlags = HideFlags.HideAndDontSave
-                };
-                texture.SetPixel(0, 0, color);
-                texture.Apply();
-                return texture;
-            }
-        }
-
-        private readonly struct EnabledScope : IDisposable
-        {
-            private readonly bool _previousState;
-            public EnabledScope(bool enabled) { _previousState = GUI.enabled; GUI.enabled = enabled; }
-            public void Dispose() => GUI.enabled = _previousState;
-        }
-
-        private enum HintType { Info, Warning, Error }
-
-        private static class IconCache
-        {
-            private static readonly Dictionary<string, Texture> Cache = new(StringComparer.Ordinal);
-
-            public static Texture Get(string name)
-            {
-                if (string.IsNullOrEmpty(name)) return null;
-
-                if (Cache.TryGetValue(name, out var cached))
-                    return cached;
-
-                var content = EditorGUIUtility.IconContent(name.StartsWith("d_") ? name : "d_" + name);
-                var texture = content?.image;
-
-                if (texture == null)
-                {
-                    content = EditorGUIUtility.IconContent(name);
-                    texture = content?.image;
-                }
-
-                Cache[name] = texture;
-                return texture;
-            }
-        }
 
         // =============================================================================================
         // LIFECYCLE
@@ -331,8 +138,24 @@ namespace CrowFX.EditorTools
 
         private void RebuildAll()
         {
-            BuildPropertyMapFromAttributes();
-            BuildSectionDefs();
+            BuildPropertyMapAndSections();
+        }
+
+        private void BuildPropertyMapAndSections()
+        {
+            var result = CrowFxSectionsModel.Build(
+                serializedObject: serializedObject,
+                favoriteSections: _favoriteSections,
+                getOrCreateSectionFold: GetOrCreateSectionFold,
+                resolveCustomDrawerOrNull: ResolveCustomDrawerOrNull
+            );
+
+            _propsBySection.Clear();
+            foreach (var kv in result.PropsBySection)
+                _propsBySection[kv.Key] = kv.Value;
+
+            _sections.Clear();
+            _sections.AddRange(result.Sections);
         }
 
         private void InitExtraFoldouts()
@@ -348,6 +171,7 @@ namespace CrowFX.EditorTools
             _foldBleedSafety      = NewFold("Bleed.Safety",      defaultExpanded: false);
             _foldBleedWobble      = NewFold("Bleed.Wobble",      defaultExpanded: false);
             _foldJitterAdvanced   = NewFold("Jitter.Advanced",   defaultExpanded: false);
+            _foldJitterHashNoise = NewFold("Jitter.HashNoise", defaultExpanded: false);
         }
 
         // =============================================================================================
@@ -358,6 +182,9 @@ namespace CrowFX.EditorTools
             var key = PrefKey(id);
             bool start = EditorPrefs.GetBool(key, defaultExpanded);
             var fold = new AnimBool(start);
+
+            // Track mapping for bulk operations
+            _prefKeyByFold[fold] = key;
 
             fold.valueChanged.AddListener(() =>
             {
@@ -383,9 +210,25 @@ namespace CrowFX.EditorTools
         {
             foreach (var f in _allFolds)
                 if (f != null) f.valueChanged.RemoveAllListeners();
+
             _allFolds.Clear();
+            _prefKeyByFold.Clear();
         }
 
+        private void SetAllFolds(bool expanded)
+        {
+            foreach (var f in _allFolds)
+            {
+                if (f == null) continue;
+                f.target = expanded;
+
+                if (_prefKeyByFold.TryGetValue(f, out var key))
+                    EditorPrefs.SetBool(key, expanded);
+            }
+
+            GUI.FocusControl(null);
+            Repaint();
+        }
         private static string PrefKey(string id) => "CrowImageEffectsEditor." + id;
 
         // =============================================================================================
@@ -447,90 +290,13 @@ namespace CrowFX.EditorTools
             }
         }
 
-        private Dictionary<string, EffectSectionMetaAttribute> ReadSectionMeta()
-        {
-            var meta = new Dictionary<string, EffectSectionMetaAttribute>(StringComparer.Ordinal);
-            var metas = typeof(CrowImageEffects).GetCustomAttributes<EffectSectionMetaAttribute>(inherit: true);
-            foreach (var m in metas)
-                meta[m.Key] = m;
-            return meta;
-        }
-
-        private void BuildSectionDefs()
-        {
-            _sections.Clear();
-
-            var meta = ReadSectionMeta();
-            var keys = _propsBySection.Keys.ToList();
-            keys = keys.Distinct(StringComparer.Ordinal).ToList();
-
-            foreach (var key in keys)
-            {
-                var def = new SectionDef(key);
-
-                if (meta.TryGetValue(key, out var m))
-                {
-                    def.Title = m.Title;
-                    def.Icon = m.Icon;
-                    def.Hint = m.Hint;
-                    def.Order = m.Order;
-                    def.Fold = GetOrCreateSectionFold(key, m.DefaultExpanded);
-                }
-                else
-                {
-                    def.Title = key;
-                    def.Icon = "d_Settings";
-                    def.Hint = "";
-                    def.Order = 500;
-                    def.Fold = GetOrCreateSectionFold(key, defaultExpanded: false);
-                }
-
-                def.Draw = ResolveCustomDrawerOrNull(key);
-                _sections.Add(def);
-            }
-
-            _sections.Sort((a, b) =>
-            {
-                bool aFav = _favoriteSections.Contains(a.Key);
-                bool bFav = _favoriteSections.Contains(b.Key);
-
-                if (aFav != bFav) return aFav ? -1 : 1; // favorites float to top
-
-                int c = a.Order.CompareTo(b.Order);
-                if (c != 0) return c;
-                return string.CompareOrdinal(a.Key, b.Key);
-            });
-        }
-
-        private Action ResolveCustomDrawerOrNull(string sectionKey)
-        {
-            return sectionKey switch
-            {
-                "Master"      => () => DrawMasterContent(),
-                "Pregrade"    => () => DrawPregradeContent(),
-                "Sampling"    => () => DrawSamplingContent(),
-                "Posterize"   => () => DrawPosterizeContent(),
-                "Palette"     => () => DrawPaletteContent(),
-                "TextureMask" => () => DrawMaskingContent(),
-                "DepthMask"   => () => DrawDepthMaskContent(),
-                "Jitter"      => () => DrawJitterContent(),
-                "Bleed"       => () => DrawBleedContent(),
-                "Ghost"       => () => DrawGhostContent(),
-                "Edges"       => () => DrawEdgeContent(),
-                "Unsharp"     => () => DrawUnsharpContent(),
-                "Dither"      => () => DrawDitherContent(),
-                "Shaders"     => () => DrawShadersContent(),
-                _             => null
-            };
-        }
-
         // =============================================================================================
         // INSPECTOR
         // =============================================================================================
         public override void OnInspectorGUI()
         {
-            Styles.Ensure();
-            Styles.ApplyFont(GetCustomFont());
+            CrowFxEditorUI.Ensure(GetCustomFont());
+
             serializedObject.Update();
 
             var fx = (CrowImageEffects)target;
@@ -564,31 +330,48 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         private void DrawSummaryPanel(CrowImageEffects targetFx)
         {
-            using (new EditorGUILayout.VerticalScope(Styles.Panel))
+            using (CrowFxEditorUI.PanelScope())
             {
-            /*var diceIcon = GetDiceIcon();
-            if (diceIcon != null)
-            {
-                bool isHovered = randomRect.Contains(Event.current.mousePosition);
-                bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
-                Color bgColor  = isPressed ? Theme.ButtonActive : isHovered ? Theme.ButtonHover : Theme.ButtonNormal;
+                using (new EditorGUILayout.VerticalScope())
+                {
+                    float w = EditorGUIUtility.currentViewWidth;
 
-                if (Event.current.type == EventType.Repaint)
-                {
-                    EditorGUI.DrawRect(randomRect, bgColor);
-                    Theme.DrawBorder(randomRect);
-                    float pad = 2f;
-                    var iconRect = new Rect(randomRect.x + pad, randomRect.y + pad,
-                                            randomRect.width - pad, randomRect.height - pad);
-                    GUI.DrawTexture(iconRect, diceIcon, ScaleMode.ScaleToFit, true);
-                } */
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    var iconLogo = GetIconLogo();
-                    if (iconLogo != null)
+                    bool iconOnly = w < 360f;
+
+                    using (new EditorGUILayout.HorizontalScope())
                     {
-                        var iconRect = GUILayoutUtility.GetRect(24f, 24f, GUILayout.Width(120f), GUILayout.Height(24f));
-                        GUI.DrawTexture(iconRect, iconLogo, ScaleMode.StretchToFill, true);
+                        var iconLogo = GetIconLogo();
+                        if (iconLogo != null)
+                        {
+                            var iconRect = GUILayoutUtility.GetRect(24f, 24f, GUILayout.Width(120f), GUILayout.Height(24f));
+                            GUI.DrawTexture(iconRect, iconLogo, ScaleMode.StretchToFill, true);
+                        }
+
+                        GUILayout.FlexibleSpace();
+
+                        var collapseIcon = GetCollapseAllIcon();
+                        var expandIcon   = GetExpandAllIcon();
+
+                        if (iconOnly)
+                        {
+                            if (CrowFxEditorUI.IconPill(collapseIcon, "Collapse all sections", 18f))
+                                SetAllFolds(false);
+
+                            GUILayout.Space(6);
+
+                            if (CrowFxEditorUI.IconPill(expandIcon, "Expand all sections", 18f))
+                                SetAllFolds(true);
+                        }
+                        else
+                        {
+                            if (CrowFxEditorUI.MiniPill("Collapse All", GUILayout.Width(110f)))
+                                SetAllFolds(false);
+
+                            GUILayout.Space(6);
+
+                            if (CrowFxEditorUI.MiniPill("Expand All", GUILayout.Width(110f)))
+                                SetAllFolds(true);
+                        }
                     }
                 }
 
@@ -609,34 +392,14 @@ namespace CrowFX.EditorTools
                     $"Grid: {resolution}   Pixel: {pixelation}   " +
                     $"Dither: {ditherMode}   Ghost: {ghostInfo}";
 
-                EditorGUILayout.LabelField(summary, Styles.SummaryText);
-                Theme.DrawDivider();
+                EditorGUILayout.LabelField(summary, CrowFxEditorUI.Styles.SummaryText);
+                CrowFxEditorUI.Divider();
 
                 GUILayout.Space(6);
 
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    GUI.SetNextControlName("CrowFX_Search");
-                    var next = EditorGUILayout.TextField(new GUIContent("Search"), _search, Styles.SearchField);
+                CrowFxEditorUI.SearchBar("Search", ref _search, Pref_Search);
 
-                    bool changed = !string.Equals(next, _search, StringComparison.Ordinal);
-                    if (changed)
-                    {
-                        _search = next ?? "";
-                        EditorPrefs.SetString(Pref_Search, _search);
-                    }
-
-                    var clearRect = GUILayoutUtility.GetRect(18f, 18f, GUILayout.Width(18f));
-                    if (GUI.Button(clearRect, GUIContent.none, Styles.SearchCancel))
-                    {
-                        _search = "";
-                        EditorPrefs.SetString(Pref_Search, _search);
-                        GUI.FocusControl(null);
-                        Repaint();
-                    }
-                }
-
-                ShowHint("Type to filter settings by name (e.g., “ghost”, “dither”, “resolution”). Click X to clear.");
+                CrowFxEditorUI.Hint("Type to filter settings by name (e.g., “ghost”, “dither”, “resolution”). Click X to clear.");
             }
         }
 
@@ -645,14 +408,14 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         private void DrawSection(string sectionKey, string title, string icon, AnimBool fold, Action drawContent, string hint)
         {
-            using (new EditorGUILayout.VerticalScope(Styles.Panel))
+            using (new EditorGUILayout.VerticalScope(CrowFxEditorUI.Styles.Panel))
             {
                 var headerRect = GUILayoutUtility.GetRect(0f, 26f, GUILayout.ExpandWidth(true));
 
                 if (Event.current.type == EventType.Repaint)
                 {
-                    GUI.DrawTexture(headerRect, Styles.HeaderTexture, ScaleMode.StretchToFill);
-                    Theme.DrawBorder(headerRect);
+                    GUI.DrawTexture(headerRect, CrowFxEditorUI.Styles.HeaderTexture, ScaleMode.StretchToFill);
+                    CrowFxEditorUI.Theme.DrawBorder(headerRect);
                 }
 
                 Rect starRect   = new Rect(headerRect.x + 2f,    headerRect.y + 4f, 16f, 18f);
@@ -691,15 +454,15 @@ namespace CrowFX.EditorTools
 
             bool isHovered = rect.Contains(Event.current.mousePosition);
             bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
-            Color bgColor  = isPressed ? Theme.ButtonActive : isHovered ? Theme.ButtonHover : Theme.ButtonNormal;
+            Color bgColor  = isPressed ? CrowFxEditorUI.Theme.ButtonActive : isHovered ? CrowFxEditorUI.Theme.ButtonHover : CrowFxEditorUI.Theme.ButtonNormal;
 
             if (Event.current.type == EventType.Repaint)
             {
                 EditorGUI.DrawRect(rect, bgColor);
-                Theme.DrawBorder(rect);
+                CrowFxEditorUI.Theme.DrawBorder(rect);
             }
 
-            var starStyle = new GUIStyle(Styles.HeaderLabel)
+            var starStyle = new GUIStyle(CrowFxEditorUI.Styles.HeaderLabel)
             {
                 alignment = TextAnchor.MiddleCenter,
                 padding   = new RectOffset(0, 0, 0, 0)
@@ -725,12 +488,12 @@ namespace CrowFX.EditorTools
             {
                 bool isHovered = randomRect.Contains(Event.current.mousePosition);
                 bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
-                Color bgColor  = isPressed ? Theme.ButtonActive : isHovered ? Theme.ButtonHover : Theme.ButtonNormal;
+                Color bgColor  = isPressed ? CrowFxEditorUI.Theme.ButtonActive : isHovered ? CrowFxEditorUI.Theme.ButtonHover : CrowFxEditorUI.Theme.ButtonNormal;
 
                 if (Event.current.type == EventType.Repaint)
                 {
                     EditorGUI.DrawRect(randomRect, bgColor);
-                    Theme.DrawBorder(randomRect);
+                    CrowFxEditorUI.Theme.DrawBorder(randomRect);
                     float pad = 2f;
                     var iconRect = new Rect(randomRect.x + pad, randomRect.y + pad,
                                             randomRect.width - pad, randomRect.height - pad);
@@ -753,7 +516,7 @@ namespace CrowFX.EditorTools
             }
             else
             {
-                if (HeaderResetPill(randomRect, "?"))
+                if (CrowFxEditorUI.HeaderResetPill(randomRect, "?"))
                 {
                     if (EditorUtility.DisplayDialog("Randomize Section",
                         $"Randomize \"{sectionKey}\" values?\n\nThis cannot be undone.",
@@ -775,8 +538,8 @@ namespace CrowFX.EditorTools
                 inset.xMin += 2f;
                 inset.xMax -= 2f;
 
-                GUI.DrawTexture(inset, Styles.HeaderTexture, ScaleMode.StretchToFill);
-                Theme.DrawBorder(inset);
+                GUI.DrawTexture(inset, CrowFxEditorUI.Styles.HeaderTexture, ScaleMode.StretchToFill);
+                CrowFxEditorUI.Theme.DrawBorder(inset);
             }
 
             HandleHeaderClick(headerRect, fold, ignoreRect1: default, ignoreRect2: default);
@@ -811,63 +574,101 @@ namespace CrowFX.EditorTools
             }
         }
 
+        private static bool ShouldHeaderUseIconOnly(float headerWidth, float rightButtonsWidth)
+        {
+            float usable = headerWidth - rightButtonsWidth;
+            return usable < 180f;
+        }
+
         private void DrawSectionHeader(Rect rect, string title, string iconName, string hint, bool isExpanded, Rect rightButtonsRect)
         {
-            var icon = IconCache.Get(iconName);
+            var icon = CrowFxEditorUI.IconCache.Get(iconName);
 
             var chevronRect = new Rect(rect.x + 24f, rect.y + 4f, 14f, 18f);
-            GUI.Label(chevronRect, isExpanded ? "▾" : "▸", Styles.HeaderLabel);
+            GUI.Label(chevronRect, isExpanded ? "▾" : "▸", CrowFxEditorUI.Styles.HeaderLabel);
+
+            float rightButtonsWidth = (rect.xMax - rightButtonsRect.xMin) + 6f;
+            bool iconOnly = ShouldHeaderUseIconOnly(rect.width, rightButtonsWidth);
 
             float xPos = rect.x + 40f;
 
+            Rect iconRect = default;
             if (icon != null)
             {
-                var iconRect = new Rect(xPos, rect.y + 5f, 16f, 16f);
+                iconRect = new Rect(xPos, rect.y + 5f, 16f, 16f);
                 GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
                 xPos = iconRect.xMax + 6f;
+
+                if (iconOnly)
+                {
+                    string tt = string.IsNullOrEmpty(hint) ? title : $"{title}\n{hint}";
+                    GUI.Label(iconRect, new GUIContent("", tt));
+                }
+            }
+
+            if (iconOnly)
+            {
+                if (icon == null)
+                {
+                    var tinyTitleRect = new Rect(xPos, rect.y + 4f, Mathf.Max(40f, rightButtonsRect.xMin - xPos - 6f), 18f);
+                    GUI.Label(tinyTitleRect, title, CrowFxEditorUI.Styles.HeaderLabel);
+                }
+                return;
             }
 
             float maxTitleWidth = 120f;
             var titleRect = new Rect(xPos, rect.y + 4f, maxTitleWidth, 18f);
-            GUI.Label(titleRect, title, Styles.HeaderLabel);
+            GUI.Label(titleRect, title, CrowFxEditorUI.Styles.HeaderLabel);
 
             if (!string.IsNullOrEmpty(hint))
             {
                 float hintLeft  = xPos + maxTitleWidth + 4f;
-                float hintRight = rightButtonsRect.xMin - 4f; // leftmost RIGHT-side button
+                float hintRight = rightButtonsRect.xMin - 4f;
                 float hintWidth = hintRight - hintLeft;
 
                 if (hintWidth > 20f)
                 {
                     var hintRect = new Rect(hintLeft, rect.y + 6f, hintWidth, 16f);
-                    GUI.Label(hintRect, $"<i>{hint}</i>", Styles.HeaderHint);
+                    GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
                 }
             }
         }
         
         private void DrawSubSectionHeader(Rect rect, string title, string iconName, string hint, bool isExpanded)
         {
-            var icon = IconCache.Get(iconName);
+            var icon = CrowFxEditorUI.IconCache.Get(iconName);
 
             var foldoutRect = new Rect(rect.x + 6f, rect.y + 4f, 14f, 14f);
             EditorGUI.Foldout(foldoutRect, isExpanded, GUIContent.none, true);
 
+            bool iconOnly = rect.width < 180f;
+
             float xPos = rect.x + 10f;
 
+            Rect iconRect = default;
             if (icon != null)
             {
-                var iconRect = new Rect(rect.x + 10f, rect.y + 3f, 16f, 16f);
+                iconRect = new Rect(rect.x + 10f, rect.y + 3f, 16f, 16f);
                 GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, true);
                 xPos = iconRect.xMax + 6f;
+
+                if (iconOnly)
+                {
+                    string tt = string.IsNullOrEmpty(hint) ? title : $"{title}\n{hint}";
+                    GUI.Label(iconRect, new GUIContent("", tt));
+                }
             }
 
+            if (iconOnly)
+                return;
+
             var titleRect = new Rect(xPos, rect.y + 2f, rect.width * 0.62f, 18f);
-            GUI.Label(titleRect, title, Styles.SubHeaderLabel);
+            GUI.Label(titleRect, title, CrowFxEditorUI.Styles.SubHeaderLabel);
 
             if (!string.IsNullOrEmpty(hint))
             {
                 var hintRect = new Rect(rect.x + rect.width * 0.62f, rect.y + 4f, rect.width * 0.36f, 16f);
-                GUI.Label(hintRect, $"<i>{hint}</i>", Styles.HeaderHint);
+                GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
             }
         }
 
@@ -877,17 +678,17 @@ namespace CrowFX.EditorTools
 
             if (Event.current.type == EventType.Repaint)
             {
-                GUI.DrawTexture(rect, Styles.HeaderTexture, ScaleMode.StretchToFill);
-                Theme.DrawBorder(rect);
+                GUI.DrawTexture(rect, CrowFxEditorUI.Styles.HeaderTexture, ScaleMode.StretchToFill);
+                CrowFxEditorUI.Theme.DrawBorder(rect);
             }
 
             var titleRect = new Rect(rect.x + 10f, rect.y + 4f, rect.width * 0.7f, 18f);
-            GUI.Label(titleRect, title, Styles.SectionTitle);
+            GUI.Label(titleRect, title, CrowFxEditorUI.Styles.SectionTitle);
 
             if (!string.IsNullOrEmpty(hint))
             {
                 var hintRect = new Rect(rect.x + rect.width * 0.7f, rect.y + 6f, rect.width * 0.28f, 16f);
-                GUI.Label(hintRect, $"<i>{hint}</i>", Styles.HeaderHint);
+                GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
             }
         }
 
@@ -1005,102 +806,6 @@ namespace CrowFX.EditorTools
                 _                              => false
             };
         }
-        // =============================================================================================
-        // BUTTONS + HINTS
-        // =============================================================================================
-        private bool PillButton(string label, float height, GUIStyle style, params GUILayoutOption[] options)
-        {
-            var rect = GUILayoutUtility.GetRect(0f, height, options);
-
-            bool isHovered = rect.Contains(Event.current.mousePosition);
-            bool isHot = GUIUtility.hotControl != 0 && isHovered;
-            bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
-
-            Color backgroundColor = !GUI.enabled ? new Color(1f, 1f, 1f, 0.03f)
-                                : isPressed || isHot ? Theme.ButtonActive
-                                : isHovered ? Theme.ButtonHover
-                                : Theme.ButtonNormal;
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, backgroundColor);
-                Theme.DrawBorder(rect);
-            }
-
-            bool clicked = GUI.Button(rect, GUIContent.none, GUIStyle.none);
-
-            var previousColor = GUI.contentColor;
-            GUI.contentColor = GUI.enabled ? Color.white : new Color(1f, 1f, 1f, 0.6f);
-            GUI.Label(rect, label, style);
-            GUI.contentColor = previousColor;
-
-            return clicked;
-        }
-
-        private bool MiniPill(string label, params GUILayoutOption[] options)
-            => PillButton(label, 18f, Styles.PillButton, options);
-
-        private bool ResetPill(string label, params GUILayoutOption[] options)
-            => PillButton(label, 18f, Styles.ResetButton, options);
-
-        private bool HeaderResetPill(Rect rect, GUIContent content)
-        {
-            bool isHovered = rect.Contains(Event.current.mousePosition);
-            bool isHot     = GUIUtility.hotControl != 0 && isHovered;
-            bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
-
-            Color backgroundColor = isPressed || isHot ? Theme.ButtonActive
-                                : isHovered           ? Theme.ButtonHover
-                                :                       Theme.ButtonNormal;
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, backgroundColor);
-                Theme.DrawBorder(rect);
-            }
-
-            bool clicked = GUI.Button(rect, GUIContent.none, GUIStyle.none);
-
-            var prev = GUI.contentColor;
-            GUI.contentColor = Color.white;
-            GUI.Label(rect, content, Styles.ResetButton);
-            GUI.contentColor = prev;
-
-            if (clicked) Event.current.Use();
-            return clicked;
-        }
-
-        private bool HeaderResetPill(Rect rect, string label) => HeaderResetPill(rect, new GUIContent(label));
-
-        private void ShowHint(string message, HintType type = HintType.Info)
-        {
-            var content = new GUIContent(message);
-            float labelWidth = EditorGUIUtility.currentViewWidth - 48f;
-            float height = Mathf.Max(18f, Styles.HintText.CalcHeight(content, labelWidth) + 6f);
-
-            var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
-            rect.xMin += 2f;
-            rect.xMax -= 2f;
-
-            Color backgroundColor = type switch
-            {
-                HintType.Warning => Theme.WarningBackground,
-                HintType.Error   => Theme.ErrorBackground,
-                _                => Theme.HintBackground
-            };
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, backgroundColor);
-                Theme.DrawBorder(rect);
-            }
-
-            var labelRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, rect.height - 6f);
-            var previousColor = GUI.contentColor;
-            GUI.contentColor = Theme.TextPrimary;
-            GUI.Label(labelRect, content, Styles.HintText);
-            GUI.contentColor = previousColor;
-        }
 
         // =============================================================================================
         // SEARCH FILTER HELPERS
@@ -1185,7 +890,7 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         private bool HandleHeaderResetButton(Rect resetRect, string sectionKey)
         {
-            if (!HeaderResetPill(resetRect, "Reset"))
+            if (!CrowFxEditorUI.HeaderResetPill(resetRect, "Reset"))
                 return false;
 
             if (EditorUtility.DisplayDialog("Reset Section",
@@ -1304,6 +1009,29 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         // CUSTOM SECTION DRAWERS
         // =============================================================================================
+
+        private Action ResolveCustomDrawerOrNull(string sectionKey)
+        {
+            return sectionKey switch
+            {
+                "Master"      => DrawMasterContent,
+                "Pregrade"    => DrawPregradeContent,
+                "Sampling"    => DrawSamplingContent,
+                "Posterize"   => DrawPosterizeContent,
+                "Palette"     => DrawPaletteContent,
+                "TextureMask" => DrawMaskingContent,
+                "DepthMask"   => DrawDepthMaskContent,
+                "Jitter"      => DrawJitterContent,
+                "Bleed"       => DrawBleedContent,
+                "Ghost"       => DrawGhostContent,
+                "Edges"       => DrawEdgeContent,
+                "Unsharp"     => DrawUnsharpContent,
+                "Dither"      => DrawDitherContent,
+                "Shaders"     => DrawShadersContent,
+                _             => null
+            };
+        }
+
         private void DrawMasterContent()
         {
             BeginSectionDrawn();
@@ -1318,7 +1046,7 @@ namespace CrowFX.EditorTools
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("opacity global master"))
             {
                 GUILayout.Space(6);
-                ShowHint("Global opacity for the entire effect stack. Does not affect internal parameters.");
+                CrowFxEditorUI.Hint("Global opacity for the entire effect stack. Does not affect internal parameters.");
             }
 
             DrawAutoRemaining("Master");
@@ -1327,7 +1055,7 @@ namespace CrowFX.EditorTools
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (ResetPill("Reset ALL to Defaults", GUILayout.ExpandWidth(true)))
+                if (CrowFxEditorUI.ResetPill("Reset ALL to Defaults", GUILayout.ExpandWidth(true)))
                 {
                     if (EditorUtility.DisplayDialog("Reset Effects",
                         "Reset ALL values to factory defaults?\n\nThis cannot be undone.",
@@ -1339,7 +1067,7 @@ namespace CrowFX.EditorTools
                     }
                 }
 
-                if (ResetPill("Randomize ALL", GUILayout.ExpandWidth(true)))
+                if (CrowFxEditorUI.ResetPill("Randomize ALL", GUILayout.ExpandWidth(true)))
                 {
                     if (EditorUtility.DisplayDialog("Randomize Effects",
                         "Randomize ALL values? This cannot be undone.\n\n(This will produce unpredictable effects, do NOT use if you suffer from epilepsy)",
@@ -1469,7 +1197,7 @@ namespace CrowFX.EditorTools
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("pregrade quantization exposure contrast gamma saturation"))
             {
                 GUILayout.Space(6);
-                ShowHint("Applied before quantization.");
+                CrowFxEditorUI.Hint("Applied before quantization.");
             }
 
             DrawAutoRemaining("Pregrade");
@@ -1512,13 +1240,13 @@ namespace CrowFX.EditorTools
                     );
 
                     GUILayout.Space(6);
-                    ShowHint("Fixes sampling to a stable grid, preventing resolution-dependent flickering.");
+                    CrowFxEditorUI.Hint("Fixes sampling to a stable grid, preventing resolution-dependent flickering.");
                 }
             }
             else
             {
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("screen backbuffer shimmer resize"))
-                    ShowHint("Off = sampling follows the backbuffer resolution (may cause shimmering on resize).");
+                    CrowFxEditorUI.Hint("Off = sampling follows the backbuffer resolution (may cause shimmering on resize).");
             }
 
             MarkDrawnMany("pixelSize", "useVirtualGrid", "virtualResolution");
@@ -1556,14 +1284,14 @@ namespace CrowFX.EditorTools
                 if (levelsB != null && PropMatchesSearch(levelsB)) { levelsB.intValue = EditorGUILayout.IntSlider("Blue", levelsB.intValue, 2, 512); }
 
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("per-channel quantization color shifting"))
-                    ShowHint("Separate quantization per channel can create color-shifting effects.");
+                    CrowFxEditorUI.Hint("Separate quantization per channel can create color-shifting effects.");
             }
             else
             {
                 if (levels != null && PropMatchesSearch(levels)) { levels.intValue = EditorGUILayout.IntSlider("Levels", levels.intValue, 2, 512); }
 
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("banding gradients quantization levels"))
-                    ShowHint("Lower values create more pronounced banding. Higher = smoother gradients.");
+                    CrowFxEditorUI.Hint("Lower values create more pronounced banding. Higher = smoother gradients.");
             }
 
             GUILayout.Space(8);
@@ -1595,7 +1323,7 @@ namespace CrowFX.EditorTools
                     if (PropMatchesSearch(speed)) EditorGUILayout.PropertyField(speed, new GUIContent("Animation Speed"));
 
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("retro shimmer cycles"))
-                        ShowHint("Cycles quantization levels over time for a retro shimmer effect.");
+                        CrowFxEditorUI.Hint("Cycles quantization levels over time for a retro shimmer effect.");
                 }
             }
 
@@ -1622,7 +1350,7 @@ namespace CrowFX.EditorTools
                 EditorGUILayout.PropertyField(thresholdCurve, new GUIContent("Threshold Curve"));
 
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("curve tonal remap palette lookup"))
-                ShowHint("Remaps tonal range before palette lookup. Use to bias towards lights or darks.");
+                CrowFxEditorUI.Hint("Remaps tonal range before palette lookup. Use to bias towards lights or darks.");
 
             GUILayout.Space(6);
 
@@ -1637,12 +1365,12 @@ namespace CrowFX.EditorTools
                 if (paletteTex != null && paletteTex.objectReferenceValue == null)
                 {
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("missing texture palette"))
-                        ShowHint("Palette enabled but no texture assigned.", HintType.Warning);
+                        CrowFxEditorUI.Hint("Palette enabled but no texture assigned.", CrowFxEditorUI.HintType.Warning);
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("maps final colors palette"))
-                        ShowHint("Maps final colors through the provided palette texture.");
+                        CrowFxEditorUI.Hint("Maps final colors through the provided palette texture.");
                 }
             }
 
@@ -1667,14 +1395,14 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(maskThreshold)) EditorGUILayout.PropertyField(maskThreshold, new GUIContent("Mask Threshold"));
 
                 if (maskTex != null && maskTex.objectReferenceValue == null)
-                    ShowHint("Mask enabled but texture is missing.", HintType.Warning);
+                    CrowFxEditorUI.Hint("Mask enabled but texture is missing.", CrowFxEditorUI.HintType.Warning);
                 else
-                    ShowHint("White = effect applied, Black = original image (threshold determines cutoff).");
+                    CrowFxEditorUI.Hint("White = effect applied, Black = original image (threshold determines cutoff).");
             }
             else
             {
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("grayscale texture selectively apply ui safe"))
-                    ShowHint("Use a grayscale texture to selectively apply effects (great for UI-safe zones).");
+                    CrowFxEditorUI.Hint("Use a grayscale texture to selectively apply effects (great for UI-safe zones).");
             }
 
             MarkDrawnMany("useMask", "maskTex", "maskThreshold");
@@ -1697,7 +1425,7 @@ namespace CrowFX.EditorTools
                     EditorGUILayout.PropertyField(depthThreshold, new GUIContent("Depth Threshold"));
 
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("attenuates distance depth texture"))
-                    ShowHint("Attenuates effects based on distance from camera. Automatically enables depth texture.");
+                    CrowFxEditorUI.Hint("Attenuates effects based on distance from camera. Automatically enables depth texture.");
             }
 
             MarkDrawnMany("useDepthMask", "depthThreshold");
@@ -1735,6 +1463,8 @@ namespace CrowFX.EditorTools
                 GUILayout.Space(6);
                 DrawJitterModeAndSpeed(pMode, pSpeed, pNoiseTex);
                 GUILayout.Space(6);
+                DrawJitterHashNoiseControls(pMode);
+                GUILayout.Space(6);
                 DrawJitterSeed(pUseSeed, pSeed);
                 GUILayout.Space(6);
                 DrawJitterScanline(pScanline);
@@ -1757,7 +1487,7 @@ namespace CrowFX.EditorTools
                 if (string.IsNullOrWhiteSpace(_search))
                 {
                     GUILayout.Space(6);
-                    ShowHint(enabled
+                    CrowFxEditorUI.Hint(enabled
                         ? "Strength blends between base and jittered sampling. Amount (px) is the actual offset scale."
                         : "Enable to apply subtle per-channel sampling offsets.");
                 }
@@ -1768,7 +1498,15 @@ namespace CrowFX.EditorTools
                 "jitterUseSeed", "jitterSeed",
                 "jitterScanline", "jitterScanlineDensity", "jitterScanlineAmp",
                 "jitterChannelWeights", "jitterDirR", "jitterDirG", "jitterDirB",
-                "jitterNoiseTex", "jitterClampUV"
+                "jitterNoiseTex", "jitterClampUV",
+                "jitterHashCellCount",
+                "jitterHashTimeSmooth",
+                "jitterHashRotateDeg",
+                "jitterHashAniso",
+                "jitterHashWarpAmpPx",
+                "jitterHashWarpCells",
+                "jitterHashWarpSpeed",
+                "jitterHashPerChannel"
             );
 
             DrawAutoRemaining("Jitter");
@@ -1835,7 +1573,7 @@ namespace CrowFX.EditorTools
                 EditorGUILayout.PropertyField(pNoiseTex, new GUIContent("Noise Tex"));
 
             if (pNoiseTex != null && pNoiseTex.objectReferenceValue == null)
-                ShowHint("BlueNoiseTex mode: assign a noise texture (128×128+ recommended).", HintType.Warning);
+                CrowFxEditorUI.Hint("BlueNoiseTex mode: assign a noise texture (128×128+ recommended).", CrowFxEditorUI.HintType.Warning);
         }
 
         private void DrawJitterSeed(SerializedProperty pUseSeed, SerializedProperty pSeed)
@@ -1856,6 +1594,61 @@ namespace CrowFX.EditorTools
             }
         }
 
+        private void DrawJitterHashNoiseControls(SerializedProperty pMode)
+        {
+            // HashNoise = enum index 2
+            bool isHash = pMode != null
+                        && pMode.propertyType == SerializedPropertyType.Enum
+                        && pMode.enumValueIndex == 2;
+
+            if (!isHash) return;
+
+            var pCellCount  = SP("jitterHashCellCount");
+            var pTimeSmooth = SP("jitterHashTimeSmooth");
+            var pRotateDeg  = SP("jitterHashRotateDeg");
+            var pAniso      = SP("jitterHashAniso");
+            var pWarpAmpPx  = SP("jitterHashWarpAmpPx");
+            var pWarpCells  = SP("jitterHashWarpCells");
+            var pWarpSpeed  = SP("jitterHashWarpSpeed");
+            var pPerChannel = SP("jitterHashPerChannel");
+
+            bool searchHitsHash =
+                !string.IsNullOrWhiteSpace(_search) &&
+                (AnyMatch(pCellCount, pTimeSmooth, pRotateDeg, pAniso, pWarpAmpPx, pWarpCells, pWarpSpeed, pPerChannel)
+                || PassesSearch("hashnoise hash noise domain warp cells aniso rotate flicker decorrelate"));
+
+            if (searchHitsHash)
+                _foldJitterHashNoise.target = true;
+
+            GUILayout.Space(8);
+
+            DrawSubSection(
+                title: "HashNoise",
+                icon: "d_PreMatCube",
+                fold: _foldJitterHashNoise,
+                hint: "procedural jitter",
+                drawContent: () =>
+                {
+                    using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                    {
+                        if (pCellCount  != null && PropMatchesSearch(pCellCount))  EditorGUILayout.PropertyField(pCellCount,  new GUIContent("Cell Count"));
+                        if (pTimeSmooth != null && PropMatchesSearch(pTimeSmooth)) EditorGUILayout.PropertyField(pTimeSmooth, new GUIContent("Time Smooth"));
+                        if (pRotateDeg  != null && PropMatchesSearch(pRotateDeg))  EditorGUILayout.PropertyField(pRotateDeg,  new GUIContent("Rotate (deg)"));
+                        if (pAniso      != null && PropMatchesSearch(pAniso))      EditorGUILayout.PropertyField(pAniso,      new GUIContent("Aniso"));
+                        if (pWarpAmpPx  != null && PropMatchesSearch(pWarpAmpPx))  EditorGUILayout.PropertyField(pWarpAmpPx,  new GUIContent("Warp Amp (px)"));
+                        if (pWarpCells  != null && PropMatchesSearch(pWarpCells))  EditorGUILayout.PropertyField(pWarpCells,  new GUIContent("Warp Cells"));
+                        if (pWarpSpeed  != null && PropMatchesSearch(pWarpSpeed))  EditorGUILayout.PropertyField(pWarpSpeed,  new GUIContent("Warp Speed"));
+                        if (pPerChannel != null && PropMatchesSearch(pPerChannel)) EditorGUILayout.PropertyField(pPerChannel, new GUIContent("Per Channel"));
+
+                        if (string.IsNullOrWhiteSpace(_search) || PassesSearch("hash noise cells warp domain rotate aniso flicker"))
+                        {
+                            CrowFxEditorUI.Hint("HashNoise = procedural jitter (no texture). Cell Count sets pattern scale; Time Smooth reduces flicker; Warp adds wobble; Rotate/Aniso bias direction; Per Channel decorrelates RGB.");
+                        }
+                    }
+                }
+            );
+        }
+        
         private void DrawJitterScanline(SerializedProperty pScanline)
         {
             if (pScanline != null && PropMatchesSearch(pScanline))
@@ -1975,7 +1768,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedBlendMode)) EditorGUILayout.PropertyField(bleedBlendMode, new GUIContent("Blend Mode"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("active inactive blend intensity"))
-                ShowHint(active ? "Active." : "Inactive until both Blend and Intensity are > 0.");
+                CrowFxEditorUI.Hint(active ? "Active." : "Inactive until both Blend and Intensity are > 0.");
         }
 
         private void DrawBleedManual(bool active)
@@ -1988,7 +1781,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(shiftB)) EditorGUILayout.PropertyField(shiftB, new GUIContent("Shift B"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("uv offsets pixel-space"))
-                ShowHint("Per-channel UV offsets (pixel-space once multiplied by intensity/texel size).");
+                CrowFxEditorUI.Hint("Per-channel UV offsets (pixel-space once multiplied by intensity/texel size).");
         }
 
         private void DrawBleedRadial(bool active)
@@ -2001,7 +1794,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedRadialStrength)) EditorGUILayout.PropertyField(bleedRadialStrength, new GUIContent("Radial Strength"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("push chromatic separation outward"))
-                ShowHint("Push chromatic separation outward from a center point.");
+                CrowFxEditorUI.Hint("Push chromatic separation outward from a center point.");
         }
 
         private void DrawBleedEdge(bool active)
@@ -2019,7 +1812,7 @@ namespace CrowFX.EditorTools
                 }
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("high-contrast edges cleaner separation"))
-                ShowHint("Restricts bleed to high-contrast edges for cleaner separation.");
+                CrowFxEditorUI.Hint("Restricts bleed to high-contrast edges for cleaner separation.");
         }
 
         private void DrawBleedSmear(bool active)
@@ -2034,7 +1827,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedFalloff)) EditorGUILayout.PropertyField(bleedFalloff, new GUIContent("Falloff"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("multi-sample trails cost"))
-                ShowHint("Multi-sample trails (cost scales with Samples).");
+                CrowFxEditorUI.Hint("Multi-sample trails (cost scales with Samples).");
         }
 
         private void DrawBleedPerChannel(bool active)
@@ -2051,7 +1844,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedAnamorphic)) EditorGUILayout.PropertyField(bleedAnamorphic, new GUIContent("Anamorphic"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("fine-tune channel separation stretch"))
-                ShowHint("Fine-tune channel separation + stretch horizontally/vertically.");
+                CrowFxEditorUI.Hint("Fine-tune channel separation + stretch horizontally/vertically.");
         }
 
         private void DrawBleedSafety(bool active)
@@ -2064,7 +1857,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedPreserveLuma)) EditorGUILayout.PropertyField(bleedPreserveLuma, new GUIContent("Preserve Luma"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("sampling outside screen stabilizes brightness"))
-                ShowHint("Clamp avoids sampling outside screen. Preserve luma stabilizes brightness.");
+                CrowFxEditorUI.Hint("Clamp avoids sampling outside screen. Preserve luma stabilizes brightness.");
         }
 
         private void DrawBleedWobble(bool active)
@@ -2079,7 +1872,7 @@ namespace CrowFX.EditorTools
                 if (PropMatchesSearch(bleedWobbleScanline)) EditorGUILayout.PropertyField(bleedWobbleScanline, new GUIContent("Scanline Wobble"));
             }
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("animated drift subtle"))
-                ShowHint("Animated drift (keep subtle).");
+                CrowFxEditorUI.Hint("Animated drift (keep subtle).");
         }
 
         private bool AnyMatch(params SerializedProperty[] props)
@@ -2125,7 +1918,7 @@ namespace CrowFX.EditorTools
 
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("ghost frames weighted composite curve"))
             {
-                ShowHint(ghostEnabled != null && ghostEnabled.boolValue
+                CrowFxEditorUI.Hint(ghostEnabled != null && ghostEnabled.boolValue
                     ? "Blends a weighted composite of previous frames. Higher weight curve = favors newer frames."
                     : "Enable to blend previous frames for ghosting.");
             }
@@ -2158,7 +1951,7 @@ namespace CrowFX.EditorTools
             MarkDrawnMany("edgeEnabled", "edgeStrength", "edgeThreshold", "edgeBlend", "edgeColor");
 
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("depth outline requires camera depth"))
-                ShowHint("Depth-based outline effect. Requires camera depth.");
+                CrowFxEditorUI.Hint("Depth-based outline effect. Requires camera depth.");
 
             DrawAutoRemaining("Edges");
         }
@@ -2193,11 +1986,10 @@ namespace CrowFX.EditorTools
                 }
             }
 
-            // FIX: claim always
             MarkDrawnMany("unsharpEnabled", "unsharpAmount", "unsharpRadius", "unsharpThreshold", "unsharpLumaOnly", "unsharpChroma");
 
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("subtracts blurred threshold noise"))
-                ShowHint("Subtracts a blurred version. Threshold helps avoid amplifying noise.");
+                CrowFxEditorUI.Hint("Subtracts a blurred version. Threshold helps avoid amplifying noise.");
 
             DrawAutoRemaining("Unsharp");
         }
@@ -2227,24 +2019,23 @@ namespace CrowFX.EditorTools
                         EditorGUILayout.PropertyField(blueNoise, new GUIContent("Blue Noise Texture"));
 
                     if (blueNoise != null && blueNoise.objectReferenceValue == null)
-                        ShowHint("Blue noise requires a texture (typically 128×128).", HintType.Error);
+                        CrowFxEditorUI.Hint("Blue noise requires a texture (typically 128×128).", CrowFxEditorUI.HintType.Error);
                     else
-                        ShowHint("Blue noise provides more organic grain than Bayer patterns.");
+                        CrowFxEditorUI.Hint("Blue noise provides more organic grain than Bayer patterns.");
                 }
                 else if (hasDither)
                 {
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("noise before quantization banding"))
-                        ShowHint("Adds structured noise before quantization to reduce banding.");
+                        CrowFxEditorUI.Hint("Adds structured noise before quantization to reduce banding.");
                 }
             }
 
             if (!hasDither)
             {
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("off quantization banding"))
-                    ShowHint("Off = pure quantization (may exhibit visible banding).");
+                    CrowFxEditorUI.Hint("Off = pure quantization (may exhibit visible banding).");
             }
 
-            // FIX: claim always (blueNoise must not leak when not in BlueNoise mode)
             MarkDrawnMany("ditherMode", "ditherStrength", "blueNoise");
 
             DrawAutoRemaining("Dither");
@@ -2255,7 +2046,7 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
 
             if (string.IsNullOrWhiteSpace(_search) || PassesSearch("shader path auto-find renamed"))
-                ShowHint("Leave empty to auto-find shaders by name. Only assign if you've renamed shader paths.");
+                CrowFxEditorUI.Hint("Leave empty to auto-find shaders by name. Only assign if you've renamed shader paths.");
 
             GUILayout.Space(6);
 
@@ -2280,100 +2071,100 @@ namespace CrowFX.EditorTools
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("120p", GUILayout.ExpandWidth(true))) SetRes(160, 120);
-                if (MiniPill("144p", GUILayout.ExpandWidth(true))) SetRes(256, 144);
+                if (CrowFxEditorUI.MiniPill("120p", GUILayout.ExpandWidth(true))) SetRes(160, 120);
+                if (CrowFxEditorUI.MiniPill("144p", GUILayout.ExpandWidth(true))) SetRes(256, 144);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("224p", GUILayout.ExpandWidth(true))) SetRes(256, 224);
-                if (MiniPill("240p", GUILayout.ExpandWidth(true))) SetRes(320, 240);
+                if (CrowFxEditorUI.MiniPill("224p", GUILayout.ExpandWidth(true))) SetRes(256, 224);
+                if (CrowFxEditorUI.MiniPill("240p", GUILayout.ExpandWidth(true))) SetRes(320, 240);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("240p (Wide)", GUILayout.ExpandWidth(true))) SetRes(426, 240);
-                if (MiniPill("200p (PC)", GUILayout.ExpandWidth(true))) SetRes(320, 200);
+                if (CrowFxEditorUI.MiniPill("240p (Wide)", GUILayout.ExpandWidth(true))) SetRes(426, 240);
+                if (CrowFxEditorUI.MiniPill("200p (PC)", GUILayout.ExpandWidth(true))) SetRes(320, 200);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("288p", GUILayout.ExpandWidth(true))) SetRes(384, 288);
-                if (MiniPill("288p (Wide)", GUILayout.ExpandWidth(true))) SetRes(512, 288);
+                if (CrowFxEditorUI.MiniPill("288p", GUILayout.ExpandWidth(true))) SetRes(384, 288);
+                if (CrowFxEditorUI.MiniPill("288p (Wide)", GUILayout.ExpandWidth(true))) SetRes(512, 288);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("300p", GUILayout.ExpandWidth(true))) SetRes(400, 300);
-                if (MiniPill("360p", GUILayout.ExpandWidth(true))) SetRes(640, 360);
+                if (CrowFxEditorUI.MiniPill("300p", GUILayout.ExpandWidth(true))) SetRes(400, 300);
+                if (CrowFxEditorUI.MiniPill("360p", GUILayout.ExpandWidth(true))) SetRes(640, 360);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("360p (Wide)", GUILayout.ExpandWidth(true))) SetRes(854, 360);
-                if (MiniPill("384p", GUILayout.ExpandWidth(true))) SetRes(512, 384);
+                if (CrowFxEditorUI.MiniPill("360p (Wide)", GUILayout.ExpandWidth(true))) SetRes(854, 360);
+                if (CrowFxEditorUI.MiniPill("384p", GUILayout.ExpandWidth(true))) SetRes(512, 384);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("448p", GUILayout.ExpandWidth(true))) SetRes(512, 448);
-                if (MiniPill("448p (Hi)", GUILayout.ExpandWidth(true))) SetRes(640, 448);
+                if (CrowFxEditorUI.MiniPill("448p", GUILayout.ExpandWidth(true))) SetRes(512, 448);
+                if (CrowFxEditorUI.MiniPill("448p (Hi)", GUILayout.ExpandWidth(true))) SetRes(640, 448);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("480p", GUILayout.ExpandWidth(true))) SetRes(640, 480);
-                if (MiniPill("480p (Wide)", GUILayout.ExpandWidth(true))) SetRes(720, 480);
+                if (CrowFxEditorUI.MiniPill("480p", GUILayout.ExpandWidth(true))) SetRes(640, 480);
+                if (CrowFxEditorUI.MiniPill("480p (Wide)", GUILayout.ExpandWidth(true))) SetRes(720, 480);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("480p (16:9)", GUILayout.ExpandWidth(true))) SetRes(854, 480);
-                if (MiniPill("480p (WS DVD)", GUILayout.ExpandWidth(true))) SetRes(720, 405);
+                if (CrowFxEditorUI.MiniPill("480p (16:9)", GUILayout.ExpandWidth(true))) SetRes(854, 480);
+                if (CrowFxEditorUI.MiniPill("480p (WS DVD)", GUILayout.ExpandWidth(true))) SetRes(720, 405);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("600p", GUILayout.ExpandWidth(true))) SetRes(800, 600);
-                if (MiniPill("540p", GUILayout.ExpandWidth(true))) SetRes(960, 540);
+                if (CrowFxEditorUI.MiniPill("600p", GUILayout.ExpandWidth(true))) SetRes(800, 600);
+                if (CrowFxEditorUI.MiniPill("540p", GUILayout.ExpandWidth(true))) SetRes(960, 540);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("576p", GUILayout.ExpandWidth(true))) SetRes(720, 576);
-                if (MiniPill("576p (Wide)", GUILayout.ExpandWidth(true))) SetRes(1024, 576);
+                if (CrowFxEditorUI.MiniPill("576p", GUILayout.ExpandWidth(true))) SetRes(720, 576);
+                if (CrowFxEditorUI.MiniPill("576p (Wide)", GUILayout.ExpandWidth(true))) SetRes(1024, 576);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("720p", GUILayout.ExpandWidth(true))) SetRes(1280, 720);
-                if (MiniPill("768p", GUILayout.ExpandWidth(true))) SetRes(1024, 768);
+                if (CrowFxEditorUI.MiniPill("720p", GUILayout.ExpandWidth(true))) SetRes(1280, 720);
+                if (CrowFxEditorUI.MiniPill("768p", GUILayout.ExpandWidth(true))) SetRes(1024, 768);
             }
             GUILayout.Space(3);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("768p (WXGA)", GUILayout.ExpandWidth(true))) SetRes(1366, 768);
-                if (MiniPill("1080p", GUILayout.ExpandWidth(true))) SetRes(1920, 1080);
+                if (CrowFxEditorUI.MiniPill("768p (WXGA)", GUILayout.ExpandWidth(true))) SetRes(1366, 768);
+                if (CrowFxEditorUI.MiniPill("1080p", GUILayout.ExpandWidth(true))) SetRes(1920, 1080);
             }
 
             GUILayout.Space(6);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (MiniPill("Reset (640×448)", GUILayout.ExpandWidth(true))) SetRes(640, 448);
-                if (MiniPill("Screen", GUILayout.ExpandWidth(true)) && useVirtualGrid != null) useVirtualGrid.boolValue = false;
+                if (CrowFxEditorUI.MiniPill("Reset (640×448)", GUILayout.ExpandWidth(true))) SetRes(640, 448);
+                if (CrowFxEditorUI.MiniPill("Screen", GUILayout.ExpandWidth(true)) && useVirtualGrid != null) useVirtualGrid.boolValue = false;
             }
         }
 
@@ -2442,5 +2233,5 @@ namespace CrowFX.EditorTools
             RebuildAll(); // re-sort sections
         }
     }
-    #endif
 }
+#endif

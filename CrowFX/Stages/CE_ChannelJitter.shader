@@ -1,3 +1,4 @@
+
 Shader "Hidden/CrowFX/Stages/ChannelJitter"
 {
     Properties
@@ -29,6 +30,18 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
         _PixelSize      ("PixelSize", Float) = 1
         _UseVirtualGrid ("UseVirtualGrid", Float) = 0
         _VirtualRes     ("VirtualRes", Vector) = (720,480,0,0)
+
+        // ------------------------------
+        // NEW: HashNoise shaping controls
+        // ------------------------------
+        _HashCellCount   ("Hash Cells (per axis)", Range(4,1024)) = 256
+        _HashTimeSmooth  ("Hash Time Smooth", Range(0,1)) = 0     // 0=stepped, 1=smooth interp between steps
+        _HashRotateDeg   ("Hash Rotate (deg)", Range(-180,180)) = 0
+        _HashAniso       ("Hash Aniso (xy)", Vector) = (1,1,0,0)
+        _HashWarpAmpPx   ("Hash Warp Amp (px)", Range(0,8)) = 0
+        _HashWarpCells   ("Hash Warp Cells", Range(4,1024)) = 64
+        _HashWarpSpeed   ("Hash Warp Speed", Range(0,30)) = 6
+        _HashPerChannel  ("Hash Per-Channel", Float) = 0          // 0=shared noise, 1=independent per RGB
     }
 
     SubShader
@@ -70,6 +83,16 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
             float _PixelSize;
             float _UseVirtualGrid;
             float4 _VirtualRes;
+
+            // NEW
+            float _HashCellCount;
+            float _HashTimeSmooth;
+            float _HashRotateDeg;
+            float4 _HashAniso;
+            float _HashWarpAmpPx;
+            float _HashWarpCells;
+            float _HashWarpSpeed;
+            float _HashPerChannel;
 
             // ------------------------------
             // Hash helpers
@@ -114,9 +137,8 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
             {
                 if (_Scanline <= 0.5) return 1.0;
 
-                float y = uv.y;
                 float dens = max(_ScanlineDensity, 1.0);
-                float lineId = floor(y * dens);
+                float lineId = floor(uv.y * dens);
 
                 float seedVal = (_UseSeed > 0.5) ? _Seed : 0.0;
                 float timeStep = floor(t * 30.0);
@@ -125,6 +147,64 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 float s = (r * 2.0 - 1.0) * _ScanlineAmp;
 
                 return 1.0 + s;
+            }
+
+            // ------------------------------
+            // NEW: hash domain utilities
+            // ------------------------------
+            float2 rot2(float2 p, float radians)
+            {
+                float s = sin(radians);
+                float c = cos(radians);
+                return float2(c * p.x - s * p.y, s * p.x + c * p.y);
+            }
+
+            float2 hashWarpUV(float2 uv, float t, float k, float2 texel)
+            {
+                if (_HashWarpAmpPx <= 1e-5) return uv;
+
+                float cells = max(_HashWarpCells, 1.0);
+                float2 cell = floor(uv * cells);
+
+                // Step-based but "moving" cell-id so it animates
+                float stepT = floor(t * max(_HashWarpSpeed, 0.0) + 1e-6);
+                float2 r = hash22(cell + k + stepT) * 2.0 - 1.0;
+
+                // Warp in UV using pixel-sized amplitude
+                float ampPx = _HashWarpAmpPx;
+                return uv + r * ampPx * texel;
+            }
+
+            float2 hashNoise2(float2 uv, float t, float k, float2 texel, float channelTag)
+            {
+                // rotate + anisotropic scaling before quantize (reduces "obvious grid")
+                float rad = radians(_HashRotateDeg);
+                float2 u = rot2(uv - 0.5, rad) + 0.5;
+
+                float2 an = max(_HashAniso.xy, 0.0001);
+                u = (u - 0.5) * an + 0.5;
+
+                // optional domain warp
+                u = hashWarpUV(u, t, k + channelTag * 101.3, texel);
+
+                // time: stepped, with optional smoothing
+                float spd = max(_JitterSpeed, 0.0);
+                float tt = t * spd;
+
+                float t0 = floor(tt + 1e-6);
+                float t1 = t0 + 1.0;
+                float a  = frac(tt);
+
+                float smooth = saturate(_HashTimeSmooth);
+                float w = lerp(0.0, smoothstep(0.0, 1.0, a), smooth);
+
+                float cells = max(_HashCellCount, 1.0);
+                float2 cell = floor(u * cells);
+
+                float2 r0 = hash22(cell + k + t0 + channelTag * 31.7) * 2.0 - 1.0;
+                float2 r1 = hash22(cell + k + t1 + channelTag * 31.7) * 2.0 - 1.0;
+
+                return lerp(r0, r1, w);
             }
 
             float2 modeOffset(float2 uv, float t, float2 texel, float strength)
@@ -144,16 +224,14 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                     float k = (_UseSeed > 0.5) ? _Seed : 0.0;
                     float a = sin(t * _JitterSpeed + k);
                     float b = cos(t * (_JitterSpeed * 0.73) + k * 1.7);
-                    float2 r = float2(a, b);
-                    return r * ampPx * texel;
+                    return float2(a, b) * ampPx * texel;
                 }
-                // 2 HashNoise
+                // 2 HashNoise (RICH)
                 else if (_JitterMode < 2.5)
                 {
                     float k = (_UseSeed > 0.5) ? _Seed : 0.0;
-                    float stepT = floor(t * max(_JitterSpeed, 0.0) + 1e-6);
-                    float2 cell = floor(uv * 256.0);
-                    float2 r = hash22(cell + k + stepT) * 2.0 - 1.0;
+                    // shared channel noise for modeOffset (actual per-channel is handled in frag)
+                    float2 r = hashNoise2(uv, t, k, texel, 0.0);
                     return r * ampPx * texel;
                 }
                 // 3 BlueNoiseTex
@@ -176,21 +254,43 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
 
                 float t = _Time.y;
                 float strength = saturate(_JitterStrength);
-
                 float2 texel = getBaseTexelSize();
-
                 float mod = scanlineMod(uv, t);
 
+                float k = (_UseSeed > 0.5) ? _Seed : 0.0;
+
+                // base offset (Static/TimeSine/BlueNoise all come from modeOffset)
                 float2 o = modeOffset(uv, t, texel, strength) * mod;
 
-                float2 oR = o * _DirR.xy;
-                float2 oG = o * _DirG.xy;
-                float2 oB = o * _DirB.xy;
+                // For HashNoise: optionally make per-channel noise (so R/G/B don't share the same random vector)
+                float isHash = step(1.5, _JitterMode) * step(_JitterMode, 2.5);
+                float perCh = (_HashPerChannel > 0.5) ? 1.0 : 0.0;
+
+                float2 oR = o;
+                float2 oG = o;
+                float2 oB = o;
+
+                if (isHash > 0.5 && perCh > 0.5)
+                {
+                    float ampPx = _JitterAmountPx * strength;
+                    float2 rR = hashNoise2(uv, t, k, texel, 1.0);
+                    float2 rG = hashNoise2(uv, t, k, texel, 2.0);
+                    float2 rB = hashNoise2(uv, t, k, texel, 3.0);
+
+                    oR = rR * ampPx * texel * mod;
+                    oG = rG * ampPx * texel * mod;
+                    oB = rB * ampPx * texel * mod;
+                }
+
+                // apply per-channel directions
+                float2 sR = oR * _DirR.xy;
+                float2 sG = oG * _DirG.xy;
+                float2 sB = oB * _DirB.xy;
 
                 float3 jitterRGB = float3(
-                    tex2D(_MainTex, safeUV(uv + oR)).r,
-                    tex2D(_MainTex, safeUV(uv + oG)).g,
-                    tex2D(_MainTex, safeUV(uv + oB)).b
+                    tex2D(_MainTex, safeUV(uv + sR)).r,
+                    tex2D(_MainTex, safeUV(uv + sG)).g,
+                    tex2D(_MainTex, safeUV(uv + sB)).b
                 );
 
                 float3 w = saturate(_ChannelWeights.rgb);

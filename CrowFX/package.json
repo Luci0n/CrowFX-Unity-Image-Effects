@@ -1,6 +1,6 @@
 {
     "name": "com.luci0n.crowfx",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "displayName": "CrowFX",
     "description": "A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more.",
     "unity": "2022.3",

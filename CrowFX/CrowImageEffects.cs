@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using CrowFX.Helpers;
 
 namespace CrowFX
 {
@@ -145,6 +146,39 @@ namespace CrowFX
         [EffectSection("Jitter", 150)]
         [Tooltip("Clamp UVs after offset (prevents sampling outside screen).")]
         public bool jitterClampUV = true;
+
+        // -------------------- HashNoise controls (Jitter) --------------------
+        [EffectSection("Jitter", 160)]
+        [Tooltip("HashNoise only: number of noise cells per axis (spatial frequency).")]
+        [Range(4, 1024)] public int jitterHashCellCount = 256;
+
+        [EffectSection("Jitter", 170)]
+        [Tooltip("HashNoise only: 0 = stepped time (poppy), 1 = smooth interpolation between steps.")]
+        [Range(0f, 1f)] public float jitterHashTimeSmooth = 0f;
+
+        [EffectSection("Jitter", 180)]
+        [Tooltip("HashNoise only: rotate the hash grid (reduces obvious axis-aligned grid look).")]
+        [Range(-180f, 180f)] public float jitterHashRotateDeg = 0f;
+
+        [EffectSection("Jitter", 190)]
+        [Tooltip("HashNoise only: anisotropic scaling of the hash domain (x/y stretch).")]
+        public Vector2 jitterHashAniso = Vector2.one;
+
+        [EffectSection("Jitter", 200)]
+        [Tooltip("HashNoise only: domain warp amplitude in pixels (adds organic crawling).")]
+        [Range(0f, 8f)] public float jitterHashWarpAmpPx = 0f;
+
+        [EffectSection("Jitter", 210)]
+        [Tooltip("HashNoise only: domain warp cell count (frequency).")]
+        [Range(4, 1024)] public int jitterHashWarpCells = 64;
+
+        [EffectSection("Jitter", 220)]
+        [Tooltip("HashNoise only: domain warp animation speed.")]
+        [Range(0f, 30f)] public float jitterHashWarpSpeed = 6f;
+
+        [EffectSection("Jitter", 230)]
+        [Tooltip("HashNoise only: if enabled, each channel gets its own independent hash vector.")]
+        public bool jitterHashPerChannel = false;
 
         // -------------------- RGB Bleeding --------------------
         [EffectSection("Bleed", 0)][Range(0f, 1f)] public float bleedBlend = 0f;
@@ -324,6 +358,14 @@ namespace CrowFX
             jitterChannelWeights.x = Mathf.Max(0f, jitterChannelWeights.x);
             jitterChannelWeights.y = Mathf.Max(0f, jitterChannelWeights.y);
             jitterChannelWeights.z = Mathf.Max(0f, jitterChannelWeights.z);
+            jitterHashCellCount = Mathf.Clamp(jitterHashCellCount, 4, 1024);
+            jitterHashWarpCells = Mathf.Clamp(jitterHashWarpCells, 4, 1024);
+            jitterHashTimeSmooth = Mathf.Clamp01(jitterHashTimeSmooth);
+            jitterHashRotateDeg = Mathf.Clamp(jitterHashRotateDeg, -180f, 180f);
+            jitterHashAniso.x = Mathf.Max(0.0001f, jitterHashAniso.x);
+            jitterHashAniso.y = Mathf.Max(0.0001f, jitterHashAniso.y);
+            jitterHashWarpAmpPx = Mathf.Max(0f, jitterHashWarpAmpPx);
+            jitterHashWarpSpeed = Mathf.Max(0f, jitterHashWarpSpeed);
 
         }
 
@@ -437,6 +479,18 @@ namespace CrowFX
             m.SetVector("_DirR", new Vector4(jitterDirR.x, jitterDirR.y, 0f, 0f));
             m.SetVector("_DirG", new Vector4(jitterDirG.x, jitterDirG.y, 0f, 0f));
             m.SetVector("_DirB", new Vector4(jitterDirB.x, jitterDirB.y, 0f, 0f));
+
+            m.SetFloat("_HashCellCount", Mathf.Clamp(jitterHashCellCount, 4, 1024));
+            m.SetFloat("_HashTimeSmooth", Mathf.Clamp01(jitterHashTimeSmooth));
+            m.SetFloat("_HashRotateDeg", Mathf.Clamp(jitterHashRotateDeg, -180f, 180f));
+            m.SetVector("_HashAniso", new Vector4(
+                Mathf.Max(0.0001f, jitterHashAniso.x),
+                Mathf.Max(0.0001f, jitterHashAniso.y), 0f, 0f));
+
+            m.SetFloat("_HashWarpAmpPx", Mathf.Max(0f, jitterHashWarpAmpPx));
+            m.SetFloat("_HashWarpCells", Mathf.Clamp(jitterHashWarpCells, 4, 1024));
+            m.SetFloat("_HashWarpSpeed", Mathf.Max(0f, jitterHashWarpSpeed));
+            m.SetFloat("_HashPerChannel", jitterHashPerChannel ? 1f : 0f);
 
             m.SetFloat("_ClampUV", jitterClampUV ? 1f : 0f);
 
