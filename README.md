@@ -41,6 +41,8 @@ A Unity image effects stack for retro and analog aesthetics. Includes posterizat
 
 **Option A — Unity Package Manager (UPM)**
 
+![recording4](https://github.com/user-attachments/assets/8b059973-532d-47cd-8ec3-a3a35e8e3b58)
+
 In Unity, open `Window > Package Manager`, click `+` → `Add package from git URL`, and enter:
 
 ```
