@@ -5,8 +5,6 @@
 ---
 A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more — all composited through a custom editor with per-section controls.
 
-<img width="1323" height="794" alt="comparison" src="https://github.com/user-attachments/assets/75375a0d-0bea-44e4-9edf-8193545d5f07" />
-
 ---
 
 ## Effects
