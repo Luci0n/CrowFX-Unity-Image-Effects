@@ -3,7 +3,7 @@
 </p>
 
 ---
-A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more - all composited through a custom editor with per-section controls.
+A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more - all composited through a custom editor with per-section controls, live profiles, and interactive previews.
 
 ---
 
@@ -59,10 +59,15 @@ Add the `CrowImageEffects` component to any camera. All effects are controlled f
 
 <img width="500" height="833" padding="5px" alt="crowfx-menu" src="https://github.com/user-attachments/assets/37c2cb3d-73c8-4c22-a8e7-58ef6f0c099f" />
 
-- Each section can be **expanded**, **reset**, or **randomized** independently
-- **Star** any section to pin it to the top of the inspector
+Current inspector workflow highlights:
+
+- **Workflow bar** for stack-wide reset, randomize, and bypass
+- Each section can be **expanded**, **favorited**, **reset**, or **randomized** independently
+- Section toolbars support **Solo**, **Mute**, **Copy**, and **Paste** for fast look development
 - Use the **search bar** to filter settings by name
-- The **summary bar** shows key active values at a glance
+- The **summary/status area** shows active stages, linked profile state, and diagnostics
+- `CrowFXProfile` assets can be assigned, created, saved, or live-synced across multiple cameras
+- Several effects include **mini previews** or direct manipulation controls in the inspector
 
 ---
 ## Examples
