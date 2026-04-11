@@ -36,6 +36,7 @@ Shader "Hidden/CrowFX/Stages/Dithering"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -132,11 +133,8 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 if (_UsePerChannel > 0.5)
                     perChLevels = float3(_LevelsR, _LevelsG, _LevelsB);
 
-                float2 screenRes = float2(1.0 / _MainTex_TexelSize.x, 1.0 / _MainTex_TexelSize.y);
-                float2 baseRes = (_UseVirtualGrid > 0.5) ? max(_VirtualRes.xy, 1.0) : screenRes;
-
                 float pxBlock = max(_PixelSize, 1.0);
-                float2 gridPos = uv * (baseRes / pxBlock);
+                float2 gridPos = uv * (CrowFX_GetBaseResolution(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize) / pxBlock);
 
                 float3 quant = Quantize(col, perChLevels, gridPos);
                 return float4(quant, 1.0);

@@ -28,6 +28,7 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -40,12 +41,7 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
 
             inline float2 StepUV()
             {
-                if (_UseVirtualGrid > 0.5)
-                {
-                    float2 g = max(_VirtualRes.xy, 1.0);
-                    return 1.0 / g;
-                }
-                return _MainTex_TexelSize.xy;
+                return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
             // 3x3 blur (gaussian-ish)
@@ -96,8 +92,8 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
 
                 if (_UnsharpLumaOnly > 0.5)
                 {
-                    float yC = dot(col, float3(0.299, 0.587, 0.114));
-                    float yB = dot(blurred, float3(0.299, 0.587, 0.114));
+                    float yC = CrowFX_Luma(col);
+                    float yB = CrowFX_Luma(blurred);
                     float yD = yC - yB;
 
                     if (thr > 0.0)

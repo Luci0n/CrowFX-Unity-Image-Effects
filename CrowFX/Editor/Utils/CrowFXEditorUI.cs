@@ -291,6 +291,46 @@ namespace CrowFX.EditorTools
             GUI.contentColor = prev;
         }
 
+        internal static bool HintWithAction(string message, string actionLabel, HintType type = HintType.Info, float actionWidth = 108f, bool actionEnabled = true)
+        {
+            var content = new GUIContent(message ?? "");
+
+            float labelWidth = Mathf.Max(120f, EditorGUIUtility.currentViewWidth - actionWidth - 64f);
+            float height = Mathf.Max(22f, Styles.HintText.CalcHeight(content, labelWidth) + 8f);
+
+            var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
+            rect.xMin += 2f;
+            rect.xMax -= 2f;
+
+            Color bg = type switch
+            {
+                HintType.Warning => Theme.WarningBackground,
+                HintType.Error   => Theme.ErrorBackground,
+                _                => Theme.HintBackground
+            };
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, bg);
+                Theme.DrawBorder(rect);
+            }
+
+            var buttonRect = new Rect(rect.xMax - actionWidth - 6f, rect.y + 3f, actionWidth, rect.height - 6f);
+            var labelRect = new Rect(rect.x + 6f, rect.y + 4f, Mathf.Max(40f, buttonRect.x - rect.x - 12f), rect.height - 8f);
+
+            var prev = GUI.contentColor;
+            GUI.contentColor = Theme.TextPrimary;
+            GUI.Label(labelRect, content, Styles.HintText);
+            GUI.contentColor = prev;
+
+            bool oldEnabled = GUI.enabled;
+            GUI.enabled = oldEnabled && actionEnabled;
+            bool clicked = DrawPill(buttonRect, actionLabel ?? "", Styles.PillButton);
+            GUI.enabled = oldEnabled;
+
+            return clicked;
+        }
+
         // =============================================================================================
         // PILLS
         // =============================================================================================
@@ -303,15 +343,31 @@ namespace CrowFX.EditorTools
         internal static bool PillButton(string label, float height, GUIStyle style, params GUILayoutOption[] options)
         {
             var rect = GUILayoutUtility.GetRect(0f, height, options);
+            return DrawPill(rect, label, style);
+        }
 
+        internal static void TagPill(string label, Color? tint = null, params GUILayoutOption[] options)
+        {
+            var rect = GUILayoutUtility.GetRect(0f, 18f, options);
+            DrawPill(rect, label ?? "", Styles.PillButton, clickable: false, tint: tint);
+        }
+
+        internal static bool HeaderPill(Rect rect, string label, string tooltip = null, bool active = false)
+        {
+            return DrawPill(rect, label ?? "", Styles.PillButton, clickable: true, tooltip: tooltip, tint: active ? Theme.ButtonActive : (Color?)null);
+        }
+
+        private static bool DrawPill(Rect rect, string label, GUIStyle style, bool clickable = true, string tooltip = null, Color? tint = null)
+        {
             bool isHovered = rect.Contains(Event.current.mousePosition);
             bool isHot     = GUIUtility.hotControl != 0 && isHovered;
             bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
 
-            Color bg = !GUI.enabled ? new Color(1f, 1f, 1f, 0.03f)
+            Color baseTint = tint ?? Theme.ButtonNormal;
+            Color bg = !GUI.enabled ? new Color(baseTint.r, baseTint.g, baseTint.b, 0.03f)
                      : (isPressed || isHot) ? Theme.ButtonActive
                      : isHovered ? Theme.ButtonHover
-                     : Theme.ButtonNormal;
+                     : baseTint;
 
             if (Event.current.type == EventType.Repaint)
             {
@@ -319,12 +375,15 @@ namespace CrowFX.EditorTools
                 Theme.DrawBorder(rect);
             }
 
-            bool clicked = GUI.Button(rect, GUIContent.none, GUIStyle.none);
+            bool clicked = clickable && GUI.Button(rect, GUIContent.none, GUIStyle.none);
 
             var prev = GUI.contentColor;
             GUI.contentColor = GUI.enabled ? Color.white : new Color(1f, 1f, 1f, 0.6f);
             GUI.Label(rect, label ?? "", style);
             GUI.contentColor = prev;
+
+            if (!string.IsNullOrEmpty(tooltip) && isHovered)
+                GUI.Label(rect, new GUIContent("", tooltip), GUIStyle.none);
 
             return clicked;
         }

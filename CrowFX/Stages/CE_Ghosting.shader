@@ -28,6 +28,7 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             sampler2D _PrevTex;
@@ -43,13 +44,7 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
             // Compute step only if we actually need an offset.
             inline float2 StepUVFast()
             {
-                // Branch is uniform (same for all pixels), so this is cheap.
-                if (_UseVirtualGrid > 0.5)
-                {
-                    float2 g = max(_VirtualRes.xy, 1.0);
-                    return rcp(g); // 1.0 / g
-                }
-                return _MainTex_TexelSize.xy;
+                return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
             fixed4 frag(v2f_img i) : SV_Target

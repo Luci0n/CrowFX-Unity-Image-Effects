@@ -11,7 +11,7 @@ namespace CrowFX.Helpers
 
         public EffectSectionAttribute(string section, int order = 0)
         {
-            Section = section ?? "Misc";
+            Section = section ?? CrowFXSectionKeys.Misc;
             Order = order;
         }
     }
@@ -34,7 +34,7 @@ namespace CrowFX.Helpers
             int order = 0,
             bool defaultExpanded = false)
         {
-            Key = key ?? "Misc";
+            Key = key ?? CrowFXSectionKeys.Misc;
             Title = string.IsNullOrEmpty(title) ? Key : title;
             Icon = string.IsNullOrEmpty(icon) ? "d_Settings" : icon;
             Hint = hint ?? "";

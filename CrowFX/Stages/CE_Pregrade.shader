@@ -22,6 +22,7 @@ Shader "Hidden/CrowFX/Stages/Pregrade"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float _PregradeEnabled, _Exposure, _Contrast, _Gamma, _Saturation;
@@ -35,7 +36,7 @@ Shader "Hidden/CrowFX/Stages/Pregrade"
                 c = max(c, 0.0);
                 c = pow(c, 1.0 / max(_Gamma, 0.001));
 
-                float l = dot(c, float3(0.299, 0.587, 0.114));
+                float l = CrowFX_Luma(c);
                 c = lerp(float3(l,l,l), c, _Saturation);
 
                 return saturate(c);

@@ -3,7 +3,7 @@
 </p>
 
 ---
-A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more — all composited through a custom editor with per-section controls.
+A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more - all composited through a custom editor with per-section controls.
 
 ---
 
@@ -15,7 +15,7 @@ A Unity image effects stack for retro and analog aesthetics. Includes posterizat
 | **Pre-Grade** | Exposure, contrast, gamma, and saturation applied before quantization |
 | **Posterize** | Uniform or per-channel color quantization with optional animation |
 | **Palette** | Maps final colors through a palette texture with a tonal curve |
-| **Dithering** | Ordered (2×2, 4×4, 8×8), noise, and blue noise patterns |
+| **Dithering** | Ordered (2x2, 4x4, 8x8), noise, and blue noise patterns |
 | **RGB Bleed** | Chromatic aberration with manual, radial, edge-gated, and smear modes |
 | **Channel Jitter** | Per-channel UV offset with sine, hash noise, and blue noise modes |
 | **Ghosting** | Weighted composite of previous frames for motion trail effects |
@@ -37,17 +37,17 @@ A Unity image effects stack for retro and analog aesthetics. Includes posterizat
 
 ## Installation
 
-**Option A — Unity Package Manager (UPM)**
+**Option A - Unity Package Manager (UPM)**
 
 ![recording4](https://github.com/user-attachments/assets/8b059973-532d-47cd-8ec3-a3a35e8e3b58)
 
-In Unity, open `Window > Package Manager`, click `+` → `Add package from git URL`, and enter:
+In Unity, open `Window > Package Manager`, click `+` -> `Add package from git URL`, and enter:
 
 ```
 https://github.com/Luci0n/CrowFX-Unity-Image-Effects.git?path=CrowFX
 ```
 
-**Option B — Unity Package**
+**Option B - Unity Package**
 
 Download the `.unitypackage` from the [Releases](https://github.com/Luci0n/CrowFX-unity-image-effects/releases) page and import it via `Assets > Import Package > Custom Package` (or just double-click the file).
 

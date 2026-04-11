@@ -23,7 +23,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
 
         // --- radial ---
         _RadialCenter ("Radial Center (UV)", Vector) = (0.5, 0.5, 0, 0)
-        _RadialStrength ("Radial Strength", Range(0,5)) = 1
+        _RadialStrength ("Radial Strength", Range(-5,5)) = 1
 
         // --- smear / multitap ---
         [Range(1,8)] _Samples ("Smear Samples", Float) = 1
@@ -63,6 +63,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -90,19 +91,11 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
             float _PixelSize, _UseVirtualGrid;
             float4 _VirtualRes;
 
-            inline float Luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+            inline float Luma(float3 c) { return CrowFX_Luma(c); }
 
             inline float2 GetPxSize()
             {
-                float2 px = _MainTex_TexelSize.xy;
-
-                if (_UseVirtualGrid > 0.5)
-                {
-                    float vx = max(1.0, _VirtualRes.x);
-                    float vy = max(1.0, _VirtualRes.y);
-                    px = float2(1.0 / vx, 1.0 / vy);
-                }
-
+                float2 px = CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
                 // NOTE: in this stage px is used as "grid pixel" size for shifting.
                 // Edge detection will undo this multiplication to sample 1 pixel steps.
                 px *= max(1.0, _PixelSize);
@@ -184,7 +177,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 if (smearLen <= 0.0 || samples <= 1.0)
                 {
                     float2 uv1 = uv + dirUV;
-                    if (clampUV > 0.5) uv1 = saturate(uv1);
+                    uv1 = CrowFX_SafeUV(uv1, clampUV);
                     return tex2D(_MainTex, uv1).rgb;
                 }
 
@@ -201,7 +194,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                     float w = pow(1.0 - t, max(0.25, falloffPow));
 
                     float2 uvK = uv + dirUV * (t * smearLen);
-                    if (clampUV > 0.5) uvK = saturate(uvK);
+                    uvK = CrowFX_SafeUV(uvK, clampUV);
 
                     acc += tex2D(_MainTex, uvK).rgb * w;
                     wsum += w;

@@ -20,6 +20,7 @@ Shader "Hidden/CrowFX/Stages/SamplingGrid"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -35,18 +36,11 @@ Shader "Hidden/CrowFX/Stages/SamplingGrid"
 
                 // Pixelation (snap UV to pixel blocks in backbuffer space)
                 if (_PixelSize > 1.0)
-                {
-                    float2 res = float2(1.0 / _MainTex_TexelSize.x, 1.0 / _MainTex_TexelSize.y);
-                    float2 pixelatedUV = floor(uv * res / _PixelSize) * (_PixelSize / res) + (0.5 * _PixelSize / res);
-                    uv = pixelatedUV;
-                }
+                    uv = CrowFX_SnapToPixelBlocks(uv, _PixelSize, _MainTex_TexelSize);
 
                 // Virtual grid stabilization (snap UV to virtual grid)
                 if (_UseVirtualGrid > 0.5)
-                {
-                    float2 grid = max(_VirtualRes.xy, 1.0);
-                    uv = (floor(originalUV * grid) + 0.5) / grid;
-                }
+                    uv = CrowFX_SnapToVirtualGrid(originalUV, _VirtualRes);
 
                 return tex2D(_MainTex, uv);
             }

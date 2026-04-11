@@ -56,6 +56,7 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -120,17 +121,12 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
 
             float2 getBaseTexelSize()
             {
-                if (_UseVirtualGrid > 0.5)
-                {
-                    float2 vr = max(_VirtualRes.xy, 1.0);
-                    return 1.0 / vr;
-                }
-                return _MainTex_TexelSize.xy;
+                return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
             float2 safeUV(float2 uv)
             {
-                return (_ClampUV > 0.5) ? clamp(uv, 0.0, 1.0) : uv;
+                return CrowFX_SafeUV(uv, _ClampUV);
             }
 
             float scanlineMod(float2 uv, float t)

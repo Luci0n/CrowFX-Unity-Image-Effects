@@ -26,6 +26,7 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
             #pragma vertex vert_img
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Common.cginc"
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
@@ -41,12 +42,7 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
 
             inline float2 StepUV()
             {
-                if (_UseVirtualGrid > 0.5)
-                {
-                    float2 g = max(_VirtualRes.xy, 1.0);
-                    return 1.0 / g;
-                }
-                return _MainTex_TexelSize.xy;
+                return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
             inline float EdgeFromDepth(float2 uv)
