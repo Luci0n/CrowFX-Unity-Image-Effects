@@ -31,16 +31,10 @@ Shader "Hidden/CrowFX/Stages/SamplingGrid"
 
             fixed4 frag(v2f_img i) : SV_Target
             {
-                float2 originalUV = i.uv;
-                float2 uv = originalUV;
+                float2 uv = i.uv;
 
-                // Pixelation (snap UV to pixel blocks in backbuffer space)
-                if (_PixelSize > 1.0)
-                    uv = CrowFX_SnapToPixelBlocks(uv, _PixelSize, _MainTex_TexelSize);
-
-                // Virtual grid stabilization (snap UV to virtual grid)
-                if (_UseVirtualGrid > 0.5)
-                    uv = CrowFX_SnapToVirtualGrid(originalUV, _VirtualRes);
+                if (_PixelSize > 1.0 || _UseVirtualGrid > 0.5)
+                    uv = CrowFX_SnapToPixelBlocks(uv, _PixelSize, _UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
 
                 return tex2D(_MainTex, uv);
             }

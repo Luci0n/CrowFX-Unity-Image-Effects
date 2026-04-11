@@ -25,7 +25,7 @@ namespace CrowFX
     [EffectSectionMeta(SectionKeys.Shaders,     title: "Shaders",           icon: "d_Shader Icon",          hint: "Advanced",             order: 1000, defaultExpanded: false)]
     public sealed class CrowImageEffects : MonoBehaviour
     {
-        public enum DitherMode { None = 0, Ordered2x2 = 1, Ordered4x4 = 2, Ordered8x8 = 3, Noise = 4, BlueNoise = 5 }
+        public enum DitherMode { None = 0, Ordered2x2 = 1, Ordered4x4 = 2, Ordered8x8 = 3, Noise = 4, BlueNoise = 5, Halftone = 6, Linear = 7, Diamond = 8 }
         public enum GhostCombineMode { Mix = 0, Add = 1, Screen = 2, Max = 3 }
         public enum BleedMode { Manual = 0, Radial = 1 }
         public enum BleedBlendMode { Mix = 0, Add = 1, Screen = 2, Max = 3 }
@@ -117,6 +117,7 @@ namespace CrowFX
             public static readonly int Speed = Shader.PropertyToID("_Speed");
             public static readonly int DitherMode = Shader.PropertyToID("_DitherMode");
             public static readonly int DitherStrength = Shader.PropertyToID("_DitherStrength");
+            public static readonly int DitherAngle = Shader.PropertyToID("_DitherAngle");
             public static readonly int BlueNoise = Shader.PropertyToID("_BlueNoise");
 
             public static readonly int ThresholdTex = Shader.PropertyToID("_ThresholdTex");
@@ -381,7 +382,8 @@ namespace CrowFX
         // -------------------- Dithering --------------------
         [EffectSection(SectionKeys.Dither, 0)][Tooltip("Pattern used for dithering before final quantization.")] public DitherMode ditherMode = DitherMode.None;
         [EffectSection(SectionKeys.Dither, 10)][Tooltip("How strongly the dither pattern affects the image.")][Range(0f, 1f)] public float ditherStrength = 0.0f;
-        [EffectSection(SectionKeys.Dither, 20)][Tooltip("Blue-noise texture used by Blue Noise mode.")] public Texture2D blueNoise;
+        [EffectSection(SectionKeys.Dither, 20)][Tooltip("Rotation in degrees for the Linear dither pattern.")][Range(0f, 180f)] public float ditherAngle = 45f;
+        [EffectSection(SectionKeys.Dither, 30)][Tooltip("Blue-noise texture used by Blue Noise mode.")] public Texture2D blueNoise;
 
         // -------------------- Stage shaders --------------------
         [EffectSection(SectionKeys.Shaders, 0)][Tooltip("Optional override for the sampling and grid shader. Leave empty to auto-find by name.")] public Shader samplingGridShader;
@@ -793,6 +795,7 @@ namespace CrowFX
 
             m.SetFloat(ShaderProps.DitherMode, (float)ditherMode);
             m.SetFloat(ShaderProps.DitherStrength, (ditherMode == DitherMode.None) ? 0f : ditherStrength);
+            m.SetFloat(ShaderProps.DitherAngle, Mathf.Repeat(ditherAngle, 180f));
 
             m.SetTexture(ShaderProps.BlueNoise,
                 (ditherMode == DitherMode.BlueNoise && blueNoise != null) ? blueNoise : Texture2D.grayTexture);

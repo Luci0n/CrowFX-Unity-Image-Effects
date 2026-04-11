@@ -1,0 +1,60 @@
+name: Sync Package Version
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to sync into CrowFX/package.json (for example v1.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sync-package-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "No release tag was provided."
+            exit 1
+          fi
+
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Using release tag: $TAG"
+
+      - name: Sync CrowFX/package.json version
+        shell: pwsh
+        run: ./.github/scripts/Sync-PackageVersionFromTag.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Commit synced package version
+        shell: bash
+        run: |
+          if git diff --quiet -- CrowFX/package.json; then
+            echo "CrowFX/package.json already matched the release tag."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CrowFX/package.json
+          git commit -m "Sync package.json to ${RELEASE_TAG}"
+          git push origin HEAD:main

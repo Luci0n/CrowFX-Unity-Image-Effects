@@ -17,6 +17,7 @@ Shader "Hidden/CrowFX/Stages/Dithering"
 
         _DitherMode ("Dither Mode", Float) = 0
         _DitherStrength ("Dither Strength", Range(0,1)) = 0
+        _DitherAngle ("Dither Angle", Range(0,180)) = 45
         _BlueNoise ("Blue Noise (128x128)", 2D) = "gray" {}
 
         _PixelSize ("Pixel Size", Float) = 1
@@ -45,6 +46,7 @@ Shader "Hidden/CrowFX/Stages/Dithering"
             float _AnimateLevels, _MinLevels, _MaxLevels, _Speed;
 
             float _DitherMode, _DitherStrength;
+            float _DitherAngle;
             sampler2D _BlueNoise;
 
             float _PixelSize;
@@ -93,6 +95,36 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 return tex2D(_BlueNoise, uv).r;
             }
 
+            inline float2 Rotate2D(float2 p, float radiansAngle)
+            {
+                float s = sin(radiansAngle);
+                float c = cos(radiansAngle);
+                return float2(c * p.x - s * p.y, s * p.x + c * p.y);
+            }
+
+            inline float DHalftone(float2 gridPos)
+            {
+                const float cellSize = 6.0;
+                float2 local = frac(Rotate2D(gridPos, radians(45.0)) / cellSize) - 0.5;
+                float dist = length(local);
+                return pow(saturate(1.0 - dist / 0.5), 1.35);
+            }
+
+            inline float DLinear(float2 gridPos)
+            {
+                float radiansAngle = radians(_DitherAngle);
+                float2 dir = float2(cos(radiansAngle), sin(radiansAngle));
+                return frac(dot(gridPos, dir) * 0.25);
+            }
+
+            inline float DDiamond(float2 gridPos)
+            {
+                const float cellSize = 6.0;
+                float2 local = frac(gridPos / cellSize) - 0.5;
+                float dist = abs(local.x) + abs(local.y);
+                return saturate(1.0 - dist / 0.5);
+            }
+
             inline float3 Quantize(float3 rgb, float3 levels, float2 gridPos)
             {
                 rgb = saturate(rgb);
@@ -107,6 +139,9 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 else if (mode == 3) thr = D8(pix);
                 else if (mode == 4) thr = DNoise(pix);
                 else if (mode == 5) thr = DBlue(pix);
+                else if (mode == 6) thr = DHalftone(gridPos);
+                else if (mode == 7) thr = DLinear(gridPos);
+                else if (mode == 8) thr = DDiamond(gridPos);
 
                 float3 scaled = rgb * (levels - 1.0);
 

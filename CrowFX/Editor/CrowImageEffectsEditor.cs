@@ -521,6 +521,60 @@ namespace CrowFX.EditorTools
             DrawWrappedTagPills(statusPills);
         }
 
+        private void DrawVersionStatus()
+        {
+            var snapshot = CrowFXVersionChecker.Current;
+            string latestLabel = snapshot.State == CrowFXVersionChecker.VersionState.Checking
+                ? "checking..."
+                : string.IsNullOrEmpty(snapshot.LatestVersion) ? "-" : snapshot.LatestVersion;
+
+            EditorGUILayout.LabelField($"Version: {snapshot.LocalVersion}   Latest release: {latestLabel}", CrowFxEditorUI.Styles.SummaryText);
+
+            switch (snapshot.State)
+            {
+                case CrowFXVersionChecker.VersionState.Checking:
+                    CrowFxEditorUI.Hint("Checking for CrowFX updates...");
+                    Repaint();
+                    break;
+
+                case CrowFXVersionChecker.VersionState.Outdated when !snapshot.IsDismissed:
+                    CrowFxEditorUI.Hint(
+                        $"You are using CrowFX {snapshot.LocalVersion}. Latest release is {snapshot.LatestVersion}.",
+                        CrowFxEditorUI.HintType.Warning);
+
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (CrowFxEditorUI.MiniPill("Open Releases", GUILayout.ExpandWidth(true)))
+                            CrowFXVersionChecker.OpenReleasesPage();
+
+                        if (CrowFxEditorUI.MiniPill("Check Now", GUILayout.Width(92f)))
+                            CrowFXVersionChecker.ForceRefresh();
+
+                        if (CrowFxEditorUI.MiniPill("Dismiss", GUILayout.Width(86f)))
+                            CrowFXVersionChecker.DismissCurrentLatest();
+                    }
+                    break;
+
+                case CrowFXVersionChecker.VersionState.Error when string.IsNullOrEmpty(snapshot.LatestVersion):
+                    CrowFxEditorUI.Hint("Could not check for CrowFX release updates right now.");
+
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (CrowFxEditorUI.MiniPill("Check Now", GUILayout.Width(92f)))
+                            CrowFXVersionChecker.ForceRefresh();
+
+                        if (CrowFxEditorUI.MiniPill("Open Releases", GUILayout.Width(118f)))
+                            CrowFXVersionChecker.OpenReleasesPage();
+                    }
+                    break;
+
+                case CrowFXVersionChecker.VersionState.Ahead:
+                    CrowFxEditorUI.Hint(
+                        $"Installed version {snapshot.LocalVersion} is newer than the latest published release ({snapshot.LatestVersion}).");
+                    break;
+            }
+        }
+
         private float GetSummaryPillWidth(string label, float minWidth, float availableWidth)
         {
             float textWidth = CrowFxEditorUI.Styles.PillButton.CalcSize(new GUIContent(label ?? "")).x + 20f;
@@ -630,6 +684,8 @@ namespace CrowFX.EditorTools
                     $"Dither: {ditherMode}   Ghost: {ghostInfo}";
 
                 EditorGUILayout.LabelField(summary, CrowFxEditorUI.Styles.SummaryText);
+                GUILayout.Space(4);
+                DrawVersionStatus();
                 GUILayout.Space(6);
                 DrawWorkflowBar();
                 CrowFxEditorUI.Divider();
@@ -3962,18 +4018,24 @@ namespace CrowFX.EditorTools
 
             var ditherMode = SP("ditherMode");
             var ditherStrength = SP("ditherStrength");
+            var ditherAngle = SP("ditherAngle");
             var blueNoise = SP("blueNoise");
 
             if (PropMatchesSearch(ditherMode))
                 DrawPropertyField(ditherMode, "Pattern");
 
             bool hasDither = ditherMode != null && ditherMode.enumValueIndex != (int)CrowImageEffects.DitherMode.None;
+            int modeIndex = ditherMode != null ? ditherMode.enumValueIndex : (int)CrowImageEffects.DitherMode.None;
 
             if (hasDither)
             {
                 DrawPropertyField(ditherStrength, "Dither Strength");
 
-                bool needsBlueNoise = ditherMode != null && ditherMode.enumValueIndex == (int)CrowImageEffects.DitherMode.BlueNoise;
+                bool needsAngle = modeIndex == (int)CrowImageEffects.DitherMode.Linear;
+                if (needsAngle)
+                    DrawPropertyField(ditherAngle, "Line Angle");
+
+                bool needsBlueNoise = modeIndex == (int)CrowImageEffects.DitherMode.BlueNoise;
                 if (needsBlueNoise)
                 {
                     DrawPropertyField(blueNoise, "Blue Noise Texture");
@@ -4002,7 +4064,22 @@ namespace CrowFX.EditorTools
                     if (!showedDiagnostic)
                         CrowFxEditorUI.Hint("Blue noise provides more organic grain than Bayer patterns.");
                 }
-                else if (hasDither)
+                else if (modeIndex == (int)CrowImageEffects.DitherMode.Linear)
+                {
+                    if (string.IsNullOrWhiteSpace(_search) || PassesSearch("line angle directional bands"))
+                        CrowFxEditorUI.Hint("Linear uses directional threshold bands. Rotate Line Angle to steer the pattern.");
+                }
+                else if (modeIndex == (int)CrowImageEffects.DitherMode.Halftone)
+                {
+                    if (string.IsNullOrWhiteSpace(_search) || PassesSearch("halftone dot matrix print"))
+                        CrowFxEditorUI.Hint("Halftone creates a repeating dot matrix look with softer clustered breakup.");
+                }
+                else if (modeIndex == (int)CrowImageEffects.DitherMode.Diamond)
+                {
+                    if (string.IsNullOrWhiteSpace(_search) || PassesSearch("diamond rhombus pattern"))
+                        CrowFxEditorUI.Hint("Diamond uses a clustered rhombus threshold for a sharper geometric texture.");
+                }
+                else
                 {
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("noise before quantization banding"))
                         CrowFxEditorUI.Hint("Adds structured noise before quantization to reduce banding.");
@@ -4015,7 +4092,7 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint("Pattern is Off, so only posterization remains. Enable a dither pattern to reduce visible banding.");
             }
 
-            MarkDrawnMany("ditherMode", "ditherStrength", "blueNoise");
+            MarkDrawnMany("ditherMode", "ditherStrength", "ditherAngle", "blueNoise");
 
             DrawAutoRemaining(SectionKeys.Dither);
         }

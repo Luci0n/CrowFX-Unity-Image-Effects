@@ -28,13 +28,13 @@ inline float2 CrowFX_GetPixelStepUV(float pixelSize, float useVirtualGrid, float
     return CrowFX_GetStepUV(useVirtualGrid, virtualRes, mainTexTexelSize) * max(pixelSize, 1.0);
 }
 
-inline float2 CrowFX_SnapToPixelBlocks(float2 uv, float pixelSize, float4 mainTexTexelSize)
+inline float2 CrowFX_SnapToPixelBlocks(float2 uv, float pixelSize, float useVirtualGrid, float4 virtualRes, float4 mainTexTexelSize)
 {
     float block = max(pixelSize, 1.0);
-    if (block <= 1.0)
+    if (block <= 1.0 && useVirtualGrid <= 0.5)
         return uv;
 
-    float2 res = CrowFX_GetScreenResolution(mainTexTexelSize);
+    float2 res = CrowFX_GetBaseResolution(useVirtualGrid, virtualRes, mainTexTexelSize);
     return floor(uv * res / block) * (block / res) + (0.5 * block / res);
 }
 

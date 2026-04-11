@@ -15,7 +15,7 @@ namespace CrowFX
     {
         [Tooltip("Size of each pixel block in screen pixels.")]
         [Range(1, 1024)] public int pixelSize = 1;
-        [Tooltip("Locks sampling and dithering to a fixed virtual grid.")]
+        [Tooltip("Locks sampling and dithering to a fixed virtual grid without replacing Pixel Block Size.")]
         public bool useVirtualGrid = false;
         [Tooltip("Virtual resolution used when Lock to Virtual Grid is enabled.")]
         public Vector2Int virtualResolution = new Vector2Int(720, 480);
@@ -260,6 +260,8 @@ namespace CrowFX
         public CrowImageEffects.DitherMode ditherMode = CrowImageEffects.DitherMode.None;
         [Tooltip("How strongly the dither pattern affects the image.")]
         [Range(0f, 1f)] public float ditherStrength = 0f;
+        [Tooltip("Rotation in degrees for the Linear dither pattern.")]
+        [Range(0f, 180f)] public float ditherAngle = 45f;
         [Tooltip("Blue-noise texture used by Blue Noise mode.")]
         public Texture2D blueNoise;
     }
@@ -395,6 +397,7 @@ namespace CrowFX
             fx.edgeColor = edges.edgeColor;
             fx.ditherMode = dither.ditherMode;
             fx.ditherStrength = dither.ditherStrength;
+            fx.ditherAngle = dither.ditherAngle;
             fx.blueNoise = dither.blueNoise;
         }
 
@@ -499,6 +502,7 @@ namespace CrowFX
             edges.edgeColor = fx.edgeColor;
             dither.ditherMode = fx.ditherMode;
             dither.ditherStrength = fx.ditherStrength;
+            dither.ditherAngle = fx.ditherAngle;
             dither.blueNoise = fx.blueNoise;
         }
 
