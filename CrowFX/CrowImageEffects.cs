@@ -26,6 +26,7 @@ namespace CrowFX
     public sealed class CrowImageEffects : MonoBehaviour
     {
         public enum DitherMode { None = 0, Ordered2x2 = 1, Ordered4x4 = 2, Ordered8x8 = 3, Noise = 4, BlueNoise = 5, Halftone = 6, Linear = 7, Diamond = 8 }
+        public enum PaletteMode { Ramp = 0, Nearest = 1 }
         public enum GhostCombineMode { Mix = 0, Add = 1, Screen = 2, Max = 3 }
         public enum BleedMode { Manual = 0, Radial = 1 }
         public enum BleedBlendMode { Mix = 0, Add = 1, Screen = 2, Max = 3 }
@@ -122,6 +123,7 @@ namespace CrowFX
 
             public static readonly int ThresholdTex = Shader.PropertyToID("_ThresholdTex");
             public static readonly int UsePalette = Shader.PropertyToID("_UsePalette");
+            public static readonly int PaletteMode = Shader.PropertyToID("_PaletteMode");
             public static readonly int PaletteTex = Shader.PropertyToID("_PaletteTex");
             public static readonly int Invert = Shader.PropertyToID("_Invert");
 
@@ -202,8 +204,9 @@ namespace CrowFX
 
         // -------------------- Palette / Curve --------------------
         [EffectSection(SectionKeys.Palette, 0)][Tooltip("Map final colors through a palette texture.")] public bool usePalette = false;
-        [EffectSection(SectionKeys.Palette, 10)][Tooltip("Palette lookup texture used when palette mapping is enabled.")] public Texture2D paletteTex;
-        [EffectSection(SectionKeys.Palette, 20)][Tooltip("Remap tonal values before palette lookup.")] public AnimationCurve thresholdCurve = AnimationCurve.Linear(0, 0, 1, 1);
+        [EffectSection(SectionKeys.Palette, 10)][Tooltip("Ramp follows tonal value along the palette strip. Nearest matches each pixel to the closest palette swatch.")] public PaletteMode paletteMode = PaletteMode.Nearest;
+        [EffectSection(SectionKeys.Palette, 20)][Tooltip("Palette lookup texture used when palette mapping is enabled.")] public Texture2D paletteTex;
+        [EffectSection(SectionKeys.Palette, 30)][Tooltip("Remap tonal values before palette lookup or nearest-color matching.")] public AnimationCurve thresholdCurve = AnimationCurve.Linear(0, 0, 1, 1);
 
         // -------------------- Masks --------------------
         [EffectSection(SectionKeys.TextureMask, 0)][Tooltip("Enable a texture mask to blend between processed and original image.")] public bool useMask = false;
@@ -814,6 +817,7 @@ namespace CrowFX
 
             bool paletteOn = usePalette && paletteTex != null;
             m.SetFloat(ShaderProps.UsePalette, paletteOn ? 1f : 0f);
+            m.SetFloat(ShaderProps.PaletteMode, (float)paletteMode);
             m.SetTexture(ShaderProps.PaletteTex, paletteTex != null ? paletteTex : Texture2D.whiteTexture);
 
             m.SetFloat(ShaderProps.Invert, invert ? 1f : 0f);

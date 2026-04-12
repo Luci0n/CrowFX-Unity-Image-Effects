@@ -18,6 +18,7 @@ namespace CrowFX.EditorTools
             UpToDate,
             Outdated,
             Ahead,
+            Stale,
             Error
         }
 
@@ -28,6 +29,7 @@ namespace CrowFX.EditorTools
             public VersionState State;
             public string ErrorMessage;
             public bool IsDismissed;
+            public bool LatestVersionIsCached;
         }
 
         [Serializable]
@@ -44,6 +46,7 @@ namespace CrowFX.EditorTools
         }
 
         private const string LatestReleaseApiUrl = "https://api.github.com/repos/Luci0n/CrowFX-Unity-Image-Effects/releases/latest";
+        private const string MainPackageJsonUrl = "https://raw.githubusercontent.com/Luci0n/CrowFX-Unity-Image-Effects/main/CrowFX/package.json";
         internal const string ReleasesUrl = "https://github.com/Luci0n/CrowFX-Unity-Image-Effects/releases";
 
         private const string PrefPrefix = "CrowFX.VersionChecker.";
@@ -60,11 +63,22 @@ namespace CrowFX.EditorTools
         private static string _errorMessage;
         private static string _packageJsonAssetPath;
         private static string _latestReleaseUrl;
+        private static long _localVersionFileTicks;
         private static DateTime _lastCheckedUtc;
         private static bool _initialized;
         private static bool _checking;
+        private static bool _latestVersionIsCached;
+        private static bool _lastRefreshFailed;
+        private static string _fallbackErrorContext;
         private static UnityWebRequest _request;
         private static VersionState _state;
+        private static RemoteCheckSource _remoteCheckSource;
+
+        private enum RemoteCheckSource
+        {
+            ReleaseApi,
+            PackageJsonFallback
+        }
 
         static CrowFXVersionChecker()
         {
@@ -83,7 +97,8 @@ namespace CrowFX.EditorTools
                     LatestVersion = _latestVersion,
                     State = _state,
                     ErrorMessage = _errorMessage,
-                    IsDismissed = IsLatestVersionDismissed()
+                    IsDismissed = IsLatestVersionDismissed(),
+                    LatestVersionIsCached = _latestVersionIsCached
                 };
             }
         }
@@ -109,12 +124,9 @@ namespace CrowFX.EditorTools
 
         private static void EnsureInitialized(bool forceRefresh = false)
         {
-            if (!_initialized)
-            {
-                _localVersion = LoadLocalVersion();
-                _initialized = true;
-                EvaluateState();
-            }
+            RefreshLocalVersion(forceRefresh || !_initialized);
+            _initialized = true;
+            EvaluateState();
 
             if (forceRefresh || ShouldRefresh())
                 BeginRemoteCheck();
@@ -140,59 +152,130 @@ namespace CrowFX.EditorTools
                 return;
 
             _checking = true;
+            _lastRefreshFailed = false;
+            _fallbackErrorContext = string.Empty;
             _state = VersionState.Checking;
             _errorMessage = string.Empty;
 
+            BeginRequest(LatestReleaseApiUrl, RemoteCheckSource.ReleaseApi, "application/vnd.github+json");
+            InternalEditorUtility.RepaintAllViews();
+        }
+
+        private static void BeginRequest(string url, RemoteCheckSource source, string acceptHeader)
+        {
             _request?.Dispose();
-            _request = UnityWebRequest.Get(LatestReleaseApiUrl);
+            _request = UnityWebRequest.Get(url);
             _request.timeout = 10;
-            _request.SetRequestHeader("Accept", "application/vnd.github+json");
+            _request.SetRequestHeader("Accept", acceptHeader);
             _request.SetRequestHeader("User-Agent", "CrowFX-VersionChecker");
+            _remoteCheckSource = source;
 
             var operation = _request.SendWebRequest();
             operation.completed += _ => CompleteRemoteCheck();
-
-            InternalEditorUtility.RepaintAllViews();
         }
 
         private static void CompleteRemoteCheck()
         {
+            bool waitingForFallback = false;
             try
             {
-                _lastCheckedUtc = DateTime.UtcNow;
-
                 if (_request == null || _request.result != UnityWebRequest.Result.Success)
                 {
-                    _errorMessage = _request != null ? _request.error : "Unknown version check error.";
+                    string requestError = _request != null ? _request.error : "Unknown version check error.";
+                    if (TryBeginPackageJsonFallback(requestError))
+                    {
+                        waitingForFallback = true;
+                        return;
+                    }
+
+                    _lastCheckedUtc = DateTime.UtcNow;
+                    _lastRefreshFailed = true;
+                    _errorMessage = BuildFallbackErrorMessage(requestError);
                     SaveCache();
                     return;
                 }
 
-                var payload = JsonUtility.FromJson<ReleaseData>(_request.downloadHandler.text ?? string.Empty);
-                string remoteVersion = NormalizeVersion(payload != null ? payload.tag_name : string.Empty);
-
-                if (string.IsNullOrEmpty(remoteVersion))
+                string body = _request.downloadHandler.text ?? string.Empty;
+                if (_remoteCheckSource == RemoteCheckSource.ReleaseApi)
                 {
-                    _errorMessage = "Latest release response did not include a valid version tag.";
+                    var payload = JsonUtility.FromJson<ReleaseData>(body);
+                    string remoteVersion = NormalizeVersion(payload != null ? payload.tag_name : string.Empty);
+
+                    if (string.IsNullOrEmpty(remoteVersion))
+                    {
+                        if (TryBeginPackageJsonFallback("Latest release response did not include a valid version tag."))
+                        {
+                            waitingForFallback = true;
+                            return;
+                        }
+
+                        _lastCheckedUtc = DateTime.UtcNow;
+                        _lastRefreshFailed = true;
+                        _errorMessage = "Latest release response did not include a valid version tag.";
+                        SaveCache();
+                        return;
+                    }
+
+                    _lastCheckedUtc = DateTime.UtcNow;
+                    _latestVersion = remoteVersion;
+                    _latestReleaseUrl = payload != null && !string.IsNullOrWhiteSpace(payload.html_url)
+                        ? payload.html_url
+                        : ReleasesUrl;
+                    _latestVersionIsCached = false;
+                    _lastRefreshFailed = false;
+                    _errorMessage = string.Empty;
                     SaveCache();
                     return;
                 }
 
-                _latestVersion = remoteVersion;
-                _latestReleaseUrl = payload != null && !string.IsNullOrWhiteSpace(payload.html_url)
-                    ? payload.html_url
-                    : ReleasesUrl;
+                var packagePayload = JsonUtility.FromJson<PackageJsonData>(body);
+                string fallbackVersion = NormalizeVersion(packagePayload != null ? packagePayload.version : string.Empty);
+                if (string.IsNullOrEmpty(fallbackVersion))
+                {
+                    _lastCheckedUtc = DateTime.UtcNow;
+                    _lastRefreshFailed = true;
+                    _errorMessage = BuildFallbackErrorMessage("Fallback package metadata did not include a valid version.");
+                    SaveCache();
+                    return;
+                }
+
+                _lastCheckedUtc = DateTime.UtcNow;
+                _latestVersion = fallbackVersion;
+                _latestReleaseUrl = ReleasesUrl;
+                _latestVersionIsCached = false;
+                _lastRefreshFailed = false;
                 _errorMessage = string.Empty;
                 SaveCache();
             }
             finally
             {
-                _checking = false;
-                _request?.Dispose();
-                _request = null;
-                EvaluateState();
-                InternalEditorUtility.RepaintAllViews();
+                if (!waitingForFallback)
+                {
+                    _checking = false;
+                    _request?.Dispose();
+                    _request = null;
+                    EvaluateState();
+                    InternalEditorUtility.RepaintAllViews();
+                }
             }
+        }
+
+        private static bool TryBeginPackageJsonFallback(string requestError)
+        {
+            if (_remoteCheckSource != RemoteCheckSource.ReleaseApi)
+                return false;
+
+            _fallbackErrorContext = requestError;
+            BeginRequest(MainPackageJsonUrl, RemoteCheckSource.PackageJsonFallback, "application/json");
+            return true;
+        }
+
+        private static string BuildFallbackErrorMessage(string fallbackError)
+        {
+            if (string.IsNullOrWhiteSpace(_fallbackErrorContext))
+                return fallbackError;
+
+            return $"{_fallbackErrorContext} Fallback package metadata request failed: {fallbackError}";
         }
 
         private static void LoadCache()
@@ -206,6 +289,8 @@ namespace CrowFX.EditorTools
 
             _latestVersion = NormalizeVersion(EditorPrefs.GetString(PrefLatestVersion, string.Empty));
             _latestReleaseUrl = EditorPrefs.GetString(PrefLatestReleaseUrl, ReleasesUrl);
+            _latestVersionIsCached = !string.IsNullOrEmpty(_latestVersion);
+            _lastRefreshFailed = false;
 
             string rawTicks = EditorPrefs.GetString(PrefLastCheckedTicks, string.Empty);
             if (long.TryParse(rawTicks, out long ticks) && ticks > 0)
@@ -225,6 +310,8 @@ namespace CrowFX.EditorTools
             _latestVersion = string.Empty;
             _latestReleaseUrl = ReleasesUrl;
             _lastCheckedUtc = default;
+            _latestVersionIsCached = false;
+            _lastRefreshFailed = false;
             EditorPrefs.DeleteKey(PrefLatestVersion);
             EditorPrefs.DeleteKey(PrefLatestReleaseUrl);
             EditorPrefs.DeleteKey(PrefLastCheckedTicks);
@@ -243,6 +330,12 @@ namespace CrowFX.EditorTools
                 _state = VersionState.Error;
                 if (string.IsNullOrEmpty(_errorMessage))
                     _errorMessage = "Installed CrowFX version could not be read from package.json.";
+                return;
+            }
+
+            if (_lastRefreshFailed && !string.IsNullOrEmpty(_latestVersion))
+            {
+                _state = VersionState.Stale;
                 return;
             }
 
@@ -265,11 +358,7 @@ namespace CrowFX.EditorTools
         {
             try
             {
-                string assetPath = ResolvePackageJsonAssetPath();
-                if (string.IsNullOrEmpty(assetPath))
-                    return string.Empty;
-
-                string fullPath = Path.GetFullPath(assetPath);
+                string fullPath = GetPackageJsonFullPath();
                 if (!File.Exists(fullPath))
                     return string.Empty;
 
@@ -282,6 +371,33 @@ namespace CrowFX.EditorTools
                 _errorMessage = ex.Message;
                 return string.Empty;
             }
+        }
+
+        private static void RefreshLocalVersion(bool force)
+        {
+            string fullPath = GetPackageJsonFullPath();
+            if (string.IsNullOrEmpty(fullPath) || !File.Exists(fullPath))
+            {
+                _localVersionFileTicks = 0;
+                _localVersion = string.Empty;
+                return;
+            }
+
+            long currentTicks = File.GetLastWriteTimeUtc(fullPath).Ticks;
+            if (!force && !string.IsNullOrEmpty(_localVersion) && currentTicks == _localVersionFileTicks)
+                return;
+
+            _localVersionFileTicks = currentTicks;
+            _localVersion = LoadLocalVersion();
+        }
+
+        private static string GetPackageJsonFullPath()
+        {
+            string assetPath = ResolvePackageJsonAssetPath();
+            if (string.IsNullOrEmpty(assetPath))
+                return string.Empty;
+
+            return Path.GetFullPath(assetPath);
         }
 
         private static string ResolvePackageJsonAssetPath()

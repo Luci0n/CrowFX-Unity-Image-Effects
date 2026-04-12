@@ -527,6 +527,14 @@ namespace CrowFX.EditorTools
             string latestLabel = snapshot.State == CrowFXVersionChecker.VersionState.Checking
                 ? "checking..."
                 : string.IsNullOrEmpty(snapshot.LatestVersion) ? "-" : snapshot.LatestVersion;
+            bool showDismiss = snapshot.State == CrowFXVersionChecker.VersionState.Outdated && !snapshot.IsDismissed;
+ 
+            if (snapshot.LatestVersionIsCached &&
+                snapshot.State != CrowFXVersionChecker.VersionState.UpToDate &&
+                snapshot.State != CrowFXVersionChecker.VersionState.Outdated)
+            {
+                latestLabel += " (cached)";
+            }
 
             EditorGUILayout.LabelField($"Version: {snapshot.LocalVersion}   Latest release: {latestLabel}", CrowFxEditorUI.Styles.SummaryText);
 
@@ -541,37 +549,34 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint(
                         $"You are using CrowFX {snapshot.LocalVersion}. Latest release is {snapshot.LatestVersion}.",
                         CrowFxEditorUI.HintType.Warning);
+                    break;
 
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        if (CrowFxEditorUI.MiniPill("Open Releases", GUILayout.ExpandWidth(true)))
-                            CrowFXVersionChecker.OpenReleasesPage();
-
-                        if (CrowFxEditorUI.MiniPill("Check Now", GUILayout.Width(92f)))
-                            CrowFXVersionChecker.ForceRefresh();
-
-                        if (CrowFxEditorUI.MiniPill("Dismiss", GUILayout.Width(86f)))
-                            CrowFXVersionChecker.DismissCurrentLatest();
-                    }
+                case CrowFXVersionChecker.VersionState.Stale:
+                    CrowFxEditorUI.Hint(
+                        $"Could not refresh GitHub release info right now. Showing cached latest release {snapshot.LatestVersion}.",
+                        CrowFxEditorUI.HintType.Warning);
                     break;
 
                 case CrowFXVersionChecker.VersionState.Error when string.IsNullOrEmpty(snapshot.LatestVersion):
                     CrowFxEditorUI.Hint("Could not check for CrowFX release updates right now.");
-
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        if (CrowFxEditorUI.MiniPill("Check Now", GUILayout.Width(92f)))
-                            CrowFXVersionChecker.ForceRefresh();
-
-                        if (CrowFxEditorUI.MiniPill("Open Releases", GUILayout.Width(118f)))
-                            CrowFXVersionChecker.OpenReleasesPage();
-                    }
                     break;
 
                 case CrowFXVersionChecker.VersionState.Ahead:
                     CrowFxEditorUI.Hint(
                         $"Installed version {snapshot.LocalVersion} is newer than the latest published release ({snapshot.LatestVersion}).");
                     break;
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (CrowFxEditorUI.MiniPill("Check Now", GUILayout.Width(92f)))
+                    CrowFXVersionChecker.ForceRefresh();
+
+                if (CrowFxEditorUI.MiniPill("Open Releases", GUILayout.ExpandWidth(true)))
+                    CrowFXVersionChecker.OpenReleasesPage();
+
+                if (showDismiss && CrowFxEditorUI.MiniPill("Dismiss", GUILayout.Width(86f)))
+                    CrowFXVersionChecker.DismissCurrentLatest();
             }
         }
 
@@ -2615,6 +2620,7 @@ namespace CrowFX.EditorTools
 
             var thresholdCurve = SP("thresholdCurve");
             var usePalette = SP("usePalette");
+            var paletteMode = SP("paletteMode");
             var paletteTex = SP("paletteTex");
 
             GUILayout.Space(6);
@@ -2624,6 +2630,7 @@ namespace CrowFX.EditorTools
 
             if (usePalette != null && usePalette.boolValue)
             {
+                DrawPropertyField(paletteMode, "Palette Mode");
                 DrawPropertyField(thresholdCurve, "Threshold Curve");
 
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("curve tonal remap palette lookup"))
@@ -2644,8 +2651,28 @@ namespace CrowFX.EditorTools
                 }
                 else
                 {
-                    if (string.IsNullOrWhiteSpace(_search) || PassesSearch("maps final colors palette"))
-                        CrowFxEditorUI.Hint("Maps final colors through the provided palette texture.");
+                    int paletteModeIndex = paletteMode != null ? paletteMode.enumValueIndex : (int)CrowImageEffects.PaletteMode.Nearest;
+
+                    if (paletteModeIndex == (int)CrowImageEffects.PaletteMode.Ramp)
+                    {
+                        if (string.IsNullOrWhiteSpace(_search) || PassesSearch("ramp strip tonal palette"))
+                            CrowFxEditorUI.Hint("Ramp maps by luminance along the longest palette axis. Strip textures are the most predictable here.");
+
+                        if (TryGetTextureSize(paletteTex, out int rampWidth, out int rampHeight) && rampWidth > 1 && rampHeight > 1)
+                            CrowFxEditorUI.Hint($"Assigned palette is {rampWidth}x{rampHeight}. Ramp mode reads along the longest axis; switch to Nearest for swatch-style palettes.", CrowFxEditorUI.HintType.Warning);
+                    }
+                    else
+                    {
+                        if (string.IsNullOrWhiteSpace(_search) || PassesSearch("nearest swatch palette match"))
+                            CrowFxEditorUI.Hint("Nearest matches each pixel to the closest palette swatch, which works better for true limited-color palettes.");
+
+                        if (TryGetTextureSize(paletteTex, out int nearestWidth, out int nearestHeight))
+                        {
+                            int totalColors = nearestWidth * nearestHeight;
+                            if (totalColors > 256)
+                                CrowFxEditorUI.Hint($"Assigned palette has {totalColors} texels. Nearest mode currently scans the first 256 colors for performance.", CrowFxEditorUI.HintType.Warning);
+                        }
+                    }
                 }
             }
             else if (string.IsNullOrWhiteSpace(_search) || PassesSearch("palette mapping threshold curve"))
@@ -2653,7 +2680,7 @@ namespace CrowFX.EditorTools
                 CrowFxEditorUI.Hint("Enable Palette Mapping to reveal the palette texture and tone-remap controls.");
             }
 
-            MarkDrawnMany("thresholdCurve", "usePalette", "paletteTex");
+            MarkDrawnMany("thresholdCurve", "usePalette", "paletteMode", "paletteTex");
             DrawAutoRemaining(SectionKeys.Palette);
         }
 

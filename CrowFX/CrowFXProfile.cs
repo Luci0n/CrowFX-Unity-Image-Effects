@@ -68,9 +68,11 @@ namespace CrowFX
     {
         [Tooltip("Map final colors through a palette texture.")]
         public bool usePalette = false;
+        [Tooltip("Ramp follows tonal value along the palette strip. Nearest matches each pixel to the closest palette swatch.")]
+        public CrowImageEffects.PaletteMode paletteMode = CrowImageEffects.PaletteMode.Nearest;
         [Tooltip("Palette lookup texture used when palette mapping is enabled.")]
         public Texture2D paletteTex;
-        [Tooltip("Remap tonal values before palette lookup.")]
+        [Tooltip("Remap tonal values before palette lookup or nearest-color matching.")]
         public AnimationCurve thresholdCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
     }
 
@@ -321,6 +323,7 @@ namespace CrowFX
             fx.luminanceOnly = posterize.luminanceOnly;
             fx.invert = posterize.invert;
             fx.usePalette = palette.usePalette;
+            fx.paletteMode = palette.paletteMode;
             fx.paletteTex = palette.paletteTex;
             fx.thresholdCurve = CloneCurve(palette.thresholdCurve);
             fx.useMask = textureMask.useMask;
@@ -426,6 +429,7 @@ namespace CrowFX
             posterize.luminanceOnly = fx.luminanceOnly;
             posterize.invert = fx.invert;
             palette.usePalette = fx.usePalette;
+            palette.paletteMode = fx.paletteMode;
             palette.paletteTex = fx.paletteTex;
             palette.thresholdCurve = CloneCurve(fx.thresholdCurve);
             textureMask.useMask = fx.useMask;
