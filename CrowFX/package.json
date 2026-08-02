@@ -1,10 +1,17 @@
 {
     "name": "com.luci0n.crowfx",
-    "version": "1.1.1",
+    "version": "2.0.0",
     "displayName": "CrowFX",
-    "description": "A Unity image effects stack for retro and analog aesthetics. Includes posterization, dithering, RGB bleed, channel jitter, ghosting, edge outlines, palette mapping, and more.",
+    "description": "A real-time Unity image-effects stack with calibrated CRT, VHS, composite, film, lens, digital-video, temporal, color, and stylization tools.",
     "unity": "2022.3",
     "dependencies": {},
+    "documentationUrl": "https://github.com/Luci0n/CrowFX-Unity-Image-Effects#readme",
+    "changelogUrl": "https://github.com/Luci0n/CrowFX-Unity-Image-Effects/blob/main/CHANGELOG.md",
+    "licensesUrl": "https://github.com/Luci0n/CrowFX-Unity-Image-Effects/blob/main/LICENSE",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Luci0n/CrowFX-Unity-Image-Effects.git"
+    },
     "keywords": [
         "unity",
         "image-effects",
@@ -26,5 +33,8 @@
         "lo-fi"
     ],
 
-    "author": { "name": "luci0n" }
+    "author": {
+        "name": "luci0n",
+        "url": "https://github.com/Luci0n"
+    }
 }

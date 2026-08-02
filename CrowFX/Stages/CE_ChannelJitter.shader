@@ -205,7 +205,8 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
 
             float2 modeOffset(float2 uv, float t, float2 texel, float strength)
             {
-                float ampPx = _JitterAmountPx * strength;
+                // Amount controls physical displacement; Strength is the wet/dry mix.
+                float ampPx = _JitterAmountPx;
 
                 // 0 Static
                 if (_JitterMode < 0.5)
@@ -240,7 +241,7 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 }
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
                 float3 baseRGB = tex2D(_MainTex, uv).rgb;
@@ -268,7 +269,7 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
 
                 if (isHash > 0.5 && perCh > 0.5)
                 {
-                    float ampPx = _JitterAmountPx * strength;
+                    float ampPx = _JitterAmountPx;
                     float2 rR = hashNoise2(uv, t, k, texel, 1.0);
                     float2 rG = hashNoise2(uv, t, k, texel, 2.0);
                     float2 rB = hashNoise2(uv, t, k, texel, 3.0);
@@ -279,9 +280,9 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 }
 
                 // apply per-channel directions
-                float2 sR = oR * _DirR.xy;
-                float2 sG = oG * _DirG.xy;
-                float2 sB = oB * _DirB.xy;
+                float2 sR = oR * ((dot(_DirR.xy, _DirR.xy) > 1e-6) ? normalize(_DirR.xy) : 0.0);
+                float2 sG = oG * ((dot(_DirG.xy, _DirG.xy) > 1e-6) ? normalize(_DirG.xy) : 0.0);
+                float2 sB = oB * ((dot(_DirB.xy, _DirB.xy) > 1e-6) ? normalize(_DirB.xy) : 0.0);
 
                 float3 jitterRGB = float3(
                     tex2D(_MainTex, safeUV(uv + sR)).r,
@@ -292,7 +293,7 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 float3 w = saturate(_ChannelWeights.rgb);
                 float3 outc = lerp(baseRGB, jitterRGB, w * strength);
 
-                return float4(saturate(outc), 1);
+                return float4(outc, 1);
             }
             ENDCG
         }

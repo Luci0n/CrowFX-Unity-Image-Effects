@@ -9,6 +9,9 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
         _EdgeThreshold ("Edge Threshold (Linear)", Range(0,1)) = 0.02
         _EdgeBlend ("Edge Blend", Range(0,1)) = 1
         _EdgeColor ("Edge Color", Color) = (0,0,0,1)
+        _EdgeThickness ("Edge Thickness", Range(0.5,4)) = 1
+        _EdgeUseNormals ("Use Normals", Float) = 1
+        _EdgeNormalThreshold ("Normal Threshold", Range(0,1)) = 0.18
 
         _UseVirtualGrid ("Use Virtual Grid", Float) = 0
         _VirtualRes ("Virtual Resolution (xy)", Vector) = (640,448,0,0)
@@ -33,8 +36,10 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
 
             // camera depth
             sampler2D_float _CameraDepthTexture;
+            sampler2D _CameraDepthNormalsTexture;
 
             float _EdgeEnabled, _EdgeStrength, _EdgeThreshold, _EdgeBlend;
+            float _EdgeThickness, _EdgeUseNormals, _EdgeNormalThreshold;
             float4 _EdgeColor;
 
             float _UseVirtualGrid;
@@ -47,7 +52,7 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
 
             inline float EdgeFromDepth(float2 uv)
             {
-                float2 stepUV = StepUV();
+                float2 stepUV = StepUV() * max(_EdgeThickness, 0.5);
 
                 float dC = LinearEyeDepth(tex2D(_CameraDepthTexture, uv).r);
                 float dR = LinearEyeDepth(tex2D(_CameraDepthTexture, uv + float2(stepUV.x, 0)).r);
@@ -56,12 +61,30 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
                 float dD = LinearEyeDepth(tex2D(_CameraDepthTexture, uv - float2(0, stepUV.y)).r);
 
                 float diff = max(max(abs(dR - dC), abs(dL - dC)), max(abs(dU - dC), abs(dD - dC)));
+                // Relative depth is stable as the camera and subject move through the scene.
+                diff /= max(abs(dC), 0.01);
 
-                float e = saturate((diff - _EdgeThreshold) * _EdgeStrength);
+                float normalEdge = 0.0;
+                if (_EdgeUseNormals > 0.5)
+                {
+                    float depthDummy;
+                    float3 nC, nR, nL, nU, nD;
+                    DecodeDepthNormal(tex2D(_CameraDepthNormalsTexture, uv), depthDummy, nC);
+                    DecodeDepthNormal(tex2D(_CameraDepthNormalsTexture, uv + float2(stepUV.x, 0)), depthDummy, nR);
+                    DecodeDepthNormal(tex2D(_CameraDepthNormalsTexture, uv - float2(stepUV.x, 0)), depthDummy, nL);
+                    DecodeDepthNormal(tex2D(_CameraDepthNormalsTexture, uv + float2(0, stepUV.y)), depthDummy, nU);
+                    DecodeDepthNormal(tex2D(_CameraDepthNormalsTexture, uv - float2(0, stepUV.y)), depthDummy, nD);
+                    float nd = max(max(1.0 - dot(nC, nR), 1.0 - dot(nC, nL)),
+                                   max(1.0 - dot(nC, nU), 1.0 - dot(nC, nD)));
+                    normalEdge = smoothstep(_EdgeNormalThreshold, _EdgeNormalThreshold + 0.08, nd);
+                }
+
+                float depthEdge = smoothstep(_EdgeThreshold, _EdgeThreshold + max(0.002, _EdgeThreshold * 0.5), diff);
+                float e = saturate(max(depthEdge, normalEdge) * _EdgeStrength);
                 return e;
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
                 float3 c = tex2D(_MainTex, uv).rgb;
@@ -72,7 +95,7 @@ Shader "Hidden/CrowFX/Stages/EdgeOutline"
                     c = lerp(c, _EdgeColor.rgb, saturate(e * _EdgeBlend));
                 }
 
-                return float4(saturate(c), 1);
+                return float4(c, 1);
             }
             ENDCG
         }

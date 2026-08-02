@@ -42,6 +42,7 @@ Shader "Hidden/CrowFX/Helpers/GhostComposite"
 
             int _Count;
             float _WeightCurve;
+            float _DecayPerTap;
 
             float3 SampleHist(int idx, float2 uv)
             {
@@ -63,7 +64,7 @@ Shader "Hidden/CrowFX/Helpers/GhostComposite"
                 return tex2D(_Hist15, uv).rgb;
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 int count = clamp(_Count, 0, 16);
 
@@ -80,15 +81,16 @@ Shader "Hidden/CrowFX/Helpers/GhostComposite"
                 {
                     if (k >= count) break;
 
-                    float t = (count <= 1) ? 1.0 : (1.0 - (k / (count - 1.0)));
-                    float w = pow(saturate(t), max(_WeightCurve, 0.0001));
+                    float t = (count <= 1) ? 1.0 : (1.0 - (k / (float)count));
+                    float w = pow(saturate(t), max(_WeightCurve, 0.0001)) *
+                              pow(saturate(_DecayPerTap), (float)k);
 
                     acc += SampleHist(k, i.uv) * w;
                     wsum += w;
                 }
 
                 acc /= max(wsum, 1e-6);
-                return float4(saturate(acc), 1);
+                return float4(acc, 1);
             }
             ENDCG
         }

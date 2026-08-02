@@ -22,17 +22,15 @@ Shader "Hidden/CrowFX/Stages/PosterizeTone"
             sampler2D _MainTex;
             float _LuminanceOnly;
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float3 col = tex2D(_MainTex, i.uv).rgb;
 
-                if (_LuminanceOnly > 0.5)
-                {
-                    float lum = dot(col, float3(0.299, 0.587, 0.114));
-                    col = lum.xxx;
-                }
+                // Luminance-only quantization is performed in CE_Dithering so the
+                // quantized luminance can be recombined with the original chroma.
+                // Keeping this legacy stage as a pass-through preserves the stack layout.
 
-                return float4(saturate(col), 1);
+                return float4(col, 1);
             }
             ENDCG
         }

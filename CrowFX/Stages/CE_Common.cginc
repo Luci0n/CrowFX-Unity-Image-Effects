@@ -1,10 +1,17 @@
 #ifndef CROWFX_COMMON_INCLUDED
 #define CROWFX_COMMON_INCLUDED
 
-inline float CrowFX_Luma(float3 c)
+inline float CrowFX_Luma601(float3 c)
 {
     return dot(c, float3(0.299, 0.587, 0.114));
 }
+
+inline float CrowFX_Luma709(float3 c)
+{
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+inline float CrowFX_Luma(float3 c) { return CrowFX_Luma709(c); }
 
 inline float2 CrowFX_GetScreenResolution(float4 mainTexTexelSize)
 {

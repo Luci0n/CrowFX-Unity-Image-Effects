@@ -165,8 +165,8 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
 
                 float2 c = _RadialCenter.xy;
                 float2 d = uv - c;
-                float len = max(1e-5, length(d));
-                return (d / len) * _RadialStrength;
+                // Lens-style lateral chromatic aberration grows with image radius.
+                return d * (_RadialStrength * 2.0);
             }
 
             inline float3 SampleSmearRGB(float2 uv, float2 off, float2 px, float smearLen, float falloffPow, float samples, float clampUV)
@@ -190,7 +190,8 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 {
                     if (k > n) break;
 
-                    float t = (float)k / (float)n;           // 0..1
+                    // Midpoint taps avoid spending the final sample at exactly zero weight.
+                    float t = ((float)k - 0.5) / (float)n;
                     float w = pow(1.0 - t, max(0.25, falloffPow));
 
                     float2 uvK = uv + dirUV * (t * smearLen);
@@ -223,7 +224,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 }
                 else if (mode < 1.5)
                 {
-                    return saturate(baseRGB + bleedRGB * blend);
+                    return baseRGB + bleedRGB * blend;
                 }
                 else if (mode < 2.5)
                 {
@@ -237,7 +238,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 }
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
 
@@ -278,8 +279,6 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 float3 bleedRGB = float3(sR.r, sG.g, sB.b);
 
                 bleedRGB = PreserveLuma(baseRGB, bleedRGB);
-                bleedRGB = saturate(bleedRGB);
-
                 float gatedBlend = blend * edge;
 
                 float3 outRGB = Combine(baseRGB, bleedRGB, gatedBlend, _BlendMode);

@@ -27,11 +27,27 @@ Shader "Hidden/CrowFX/Stages/PaletteMapping"
             sampler2D _ThresholdTex;
 
             float _UsePalette;
+            float _UseThreshold;
             float _PaletteMode;
             sampler2D _PaletteTex;
             float4 _PaletteTex_TexelSize;
 
             float _Invert;
+            int _PaletteColorCount;
+            float _PalettePerceptual;
+
+            inline float3 LinearToOklab(float3 c)
+            {
+                float3 lms = float3(
+                    dot(c, float3(0.4122214708, 0.5363325363, 0.0514459929)),
+                    dot(c, float3(0.2119034982, 0.6806995451, 0.1073969566)),
+                    dot(c, float3(0.0883024619, 0.2817188376, 0.6299787005)));
+                lms = pow(max(lms, 0.0), 1.0 / 3.0);
+                return float3(
+                    dot(lms, float3(0.2104542553, 0.7936177850, -0.0040720468)),
+                    dot(lms, float3(1.9779984951, -2.4285922050, 0.4505937099)),
+                    dot(lms, float3(0.0259040371, 0.7827717662, -0.8086757660)));
+            }
 
             inline float3 SamplePaletteRamp(float value, int width, int height)
             {
@@ -43,11 +59,20 @@ Shader "Hidden/CrowFX/Stages/PaletteMapping"
 
             inline float3 SamplePaletteNearest(float3 color, int width, int height)
             {
-                const int MAX_PALETTE_SAMPLES = 256;
+                const int MAX_PALETTE_SAMPLES = 64;
 
                 int safeWidth = max(width, 1);
                 int safeHeight = max(height, 1);
-                int total = min(safeWidth * safeHeight, MAX_PALETTE_SAMPLES);
+                int total = min(min(safeWidth * safeHeight, MAX_PALETTE_SAMPLES), max(_PaletteColorCount, 2));
+
+                float3 comparisonColor = color;
+                if (_PalettePerceptual > 0.5)
+                {
+                    #if defined(UNITY_COLORSPACE_GAMMA)
+                        comparisonColor = GammaToLinearSpace(max(color, 0.0));
+                    #endif
+                    comparisonColor = LinearToOklab(comparisonColor);
+                }
 
                 float bestDistance = 1e9;
                 float3 bestColor = color;
@@ -65,8 +90,16 @@ Shader "Hidden/CrowFX/Stages/PaletteMapping"
 
                     float2 uv = float2((x + 0.5) / safeWidth, (y + 0.5) / safeHeight);
                     float3 candidate = tex2D(_PaletteTex, uv).rgb;
-                    float3 delta = color - candidate;
-                    float distance = dot(delta * delta, float3(0.2126, 0.7152, 0.0722));
+                    float3 candidateComparison = candidate;
+                    if (_PalettePerceptual > 0.5)
+                    {
+                        #if defined(UNITY_COLORSPACE_GAMMA)
+                            candidateComparison = GammaToLinearSpace(max(candidate, 0.0));
+                        #endif
+                        candidateComparison = LinearToOklab(candidateComparison);
+                    }
+                    float3 delta = comparisonColor - candidateComparison;
+                    float distance = dot(delta, delta);
 
                     if (distance < bestDistance)
                     {
@@ -78,14 +111,16 @@ Shader "Hidden/CrowFX/Stages/PaletteMapping"
                 return bestColor;
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float3 c = tex2D(_MainTex, i.uv).rgb;
 
-                // Threshold curve remap per channel (use y=0 for a 256x1 curve texture)
-                c.r = tex2D(_ThresholdTex, float2(c.r, 0.0)).r;
-                c.g = tex2D(_ThresholdTex, float2(c.g, 0.0)).r;
-                c.b = tex2D(_ThresholdTex, float2(c.b, 0.0)).r;
+                if (_UseThreshold > 0.5)
+                {
+                    c.r = tex2D(_ThresholdTex, float2(saturate(c.r), 0.5)).r;
+                    c.g = tex2D(_ThresholdTex, float2(saturate(c.g), 0.5)).r;
+                    c.b = tex2D(_ThresholdTex, float2(saturate(c.b), 0.5)).r;
+                }
 
                 // Palette lookup (tonal ramp or nearest swatch)
                 if (_UsePalette > 0.5)
@@ -116,7 +151,7 @@ Shader "Hidden/CrowFX/Stages/PaletteMapping"
                 #endif
                 }
 
-                return float4(saturate(c), 1);
+                return float4(c, 1);
             }
             ENDCG
         }

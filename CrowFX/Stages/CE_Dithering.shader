@@ -9,6 +9,7 @@ Shader "Hidden/CrowFX/Stages/Dithering"
         _LevelsG  ("Levels G", Range(2,512)) = 64
         _LevelsB  ("Levels B", Range(2,512)) = 64
         _UsePerChannel ("Use Per Channel", Float) = 0
+        _LuminanceOnly ("Luminance Only", Float) = 0
 
         _AnimateLevels ("Animate Levels", Float) = 0
         _MinLevels ("Min Levels", Float) = 64
@@ -42,12 +43,14 @@ Shader "Hidden/CrowFX/Stages/Dithering"
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
 
-            float _Levels, _LevelsR, _LevelsG, _LevelsB, _UsePerChannel;
+            float _Levels, _LevelsR, _LevelsG, _LevelsB, _UsePerChannel, _LuminanceOnly;
             float _AnimateLevels, _MinLevels, _MaxLevels, _Speed;
 
             float _DitherMode, _DitherStrength;
             float _DitherAngle;
             sampler2D _BlueNoise;
+            float4 _BlueNoise_TexelSize;
+            float _TemporalDither, _TemporalDitherRate, _HalftoneScale, _HalftoneDotGain;
 
             float _PixelSize;
             float _UseVirtualGrid;
@@ -90,8 +93,11 @@ Shader "Hidden/CrowFX/Stages/Dithering"
 
             inline float DBlue(int2 p)
             {
-                int2 pp = p & 127; // assumes 128x128
-                float2 uv = (float2(pp) + 0.5) / 128.0;
+                int frame = (_TemporalDither > 0.5) ? (int)floor(_Time.y * _TemporalDitherRate) : 0;
+                int2 size = max((int2)_BlueNoise_TexelSize.zw, int2(1, 1));
+                int2 pp = int2((p.x + frame * 37) % size.x, (p.y + frame * 17) % size.y);
+                pp += int2(pp.x < 0 ? size.x : 0, pp.y < 0 ? size.y : 0);
+                float2 uv = (float2(pp) + 0.5) / float2(size);
                 return tex2D(_BlueNoise, uv).r;
             }
 
@@ -102,12 +108,12 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 return float2(c * p.x - s * p.y, s * p.x + c * p.y);
             }
 
-            inline float DHalftone(float2 gridPos)
+            inline float DHalftone(float2 gridPos, float angle)
             {
-                const float cellSize = 6.0;
-                float2 local = frac(Rotate2D(gridPos, radians(45.0)) / cellSize) - 0.5;
+                float cellSize = max(_HalftoneScale, 2.0);
+                float2 local = frac(Rotate2D(gridPos, radians(angle)) / cellSize) - 0.5;
                 float dist = length(local);
-                return pow(saturate(1.0 - dist / 0.5), 1.35);
+                return saturate(pow(saturate(1.0 - dist / 0.5), 1.35) + _HalftoneDotGain);
             }
 
             inline float DLinear(float2 gridPos)
@@ -139,20 +145,27 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 else if (mode == 3) thr = D8(pix);
                 else if (mode == 4) thr = DNoise(pix);
                 else if (mode == 5) thr = DBlue(pix);
-                else if (mode == 6) thr = DHalftone(gridPos);
+                else if (mode == 6) thr = DHalftone(gridPos, 45.0);
                 else if (mode == 7) thr = DLinear(gridPos);
                 else if (mode == 8) thr = DDiamond(gridPos);
 
                 float3 scaled = rgb * (levels - 1.0);
 
                 if (_DitherStrength > 0.0)
-                    scaled += (thr - 0.5) * _DitherStrength;
+                {
+                    float3 threshold = thr.xxx;
+                    // Separated print-screen angles prevent every color channel from
+                    // collapsing into the same monochrome dot lattice.
+                    if (mode == 6)
+                        threshold = float3(DHalftone(gridPos, 15.0), DHalftone(gridPos, 75.0), DHalftone(gridPos, 0.0));
+                    scaled += (threshold - 0.5) * _DitherStrength;
+                }
 
                 float3 q = clamp(floor(scaled + 0.5), 0.0, levels - 1.0);
                 return q / (levels - 1.0);
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
                 float3 col = tex2D(_MainTex, uv).rgb;
@@ -171,7 +184,18 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 float pxBlock = max(_PixelSize, 1.0);
                 float2 gridPos = uv * (CrowFX_GetBaseResolution(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize) / pxBlock);
 
-                float3 quant = Quantize(col, perChLevels, gridPos);
+                float3 quant;
+                if (_LuminanceOnly > 0.5)
+                {
+                    float lum = CrowFX_Luma(col);
+                    float quantLum = Quantize(lum.xxx, levelsAnim.xxx, gridPos).r;
+                    quant = (lum > 1e-5) ? col * (quantLum / lum) : quantLum.xxx;
+                    quant = saturate(quant);
+                }
+                else
+                {
+                    quant = Quantize(col, perChLevels, gridPos);
+                }
                 return float4(quant, 1.0);
             }
             ENDCG

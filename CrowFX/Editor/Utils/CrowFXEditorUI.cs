@@ -98,6 +98,9 @@ namespace CrowFX.EditorTools
 
             public static GUIStyle SearchField;
             public static GUIStyle SearchCancel;
+            public static GUIStyle PopupLabel;
+            public static GUIStyle PopupValue;
+            public static GUIStyle PopupArrow;
 
             public static void Ensure()
             {
@@ -172,6 +175,31 @@ namespace CrowFX.EditorTools
                 SearchField  = GUI.skin.FindStyle("ToolbarSearchTextField") ?? EditorStyles.textField;
                 SearchCancel = GUI.skin.FindStyle("ToolbarSearchCancelButton") ?? GUI.skin.button;
 
+                PopupLabel = new GUIStyle(EditorStyles.label)
+                {
+                    alignment = TextAnchor.MiddleLeft,
+                    clipping = TextClipping.Clip,
+                    fontSize = 11
+                };
+                PopupLabel.normal.textColor = Theme.TextSecondary;
+
+                PopupValue = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    alignment = TextAnchor.MiddleLeft,
+                    clipping = TextClipping.Clip,
+                    fontSize = 10,
+                    padding = new RectOffset(0, 0, 1, 0)
+                };
+                PopupValue.normal.textColor = Theme.TextSecondary;
+
+                PopupArrow = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    clipping = TextClipping.Clip,
+                    fontSize = 11
+                };
+                PopupArrow.normal.textColor = new Color(0.48f, 0.72f, 0.76f, 0.92f);
+
                 _initialized = true;
             }
 
@@ -188,6 +216,9 @@ namespace CrowFX.EditorTools
                 HeaderHint.font     = font;
                 PillButton.font     = font;
                 ResetButton.font    = font;
+                PopupLabel.font     = font;
+                PopupValue.font     = font;
+                PopupArrow.font     = font;
             }
 
             private static Texture2D CreateColorTexture(Color color)
@@ -336,6 +367,311 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         internal static bool MiniPill(string label, params GUILayoutOption[] options)
             => PillButton(label, 18f, Styles.PillButton, options);
+
+        internal static bool SelectionPill(string label, bool selected, string tooltip = null, params GUILayoutOption[] options)
+        {
+            var rect = GUILayoutUtility.GetRect(0f, 20f, options);
+            return DrawPill(rect, label ?? "", Styles.PillButton, clickable: true, tooltip: tooltip,
+                tint: selected ? Theme.ButtonActive : (Color?)null);
+        }
+
+        // Popup selections are queued so the owning inspector applies serialized changes during
+        // its normal IMGUI and Undo lifecycle on the next repaint.
+        private static readonly Dictionary<string, int> PendingPopupSelections = new(StringComparer.Ordinal);
+        private static ThemedPopupWindow _activePopupWindow;
+        private static string _activePopupKey;
+        private static string _suppressPopupOpenKey;
+        private static double _suppressPopupOpenUntil;
+
+        internal static int ThemedPopup(string key, int current, string[] options, params GUILayoutOption[] layoutOptions)
+        {
+            var rect = GUILayoutUtility.GetRect(0f, 20f, layoutOptions);
+            return ThemedPopup(rect, key, current, options);
+        }
+
+        internal static int ThemedPopup(string key, GUIContent label, int current, string[] options)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, 22f);
+            var indentedRect = EditorGUI.IndentedRect(rect);
+            float labelWidth = Mathf.Clamp(EditorGUIUtility.labelWidth, 72f, Mathf.Max(72f, indentedRect.width - 124f));
+            var labelRect = new Rect(indentedRect.x, indentedRect.y + 2f, Mathf.Max(40f, labelWidth - 4f), EditorGUIUtility.singleLineHeight);
+            var fieldRect = new Rect(labelRect.xMax + 4f, indentedRect.y + 2f, Mathf.Max(40f, indentedRect.xMax - labelRect.xMax - 4f), EditorGUIUtility.singleLineHeight);
+            EditorGUI.LabelField(labelRect, label ?? GUIContent.none, Styles.PopupLabel);
+            return ThemedPopup(fieldRect, key, current, options);
+        }
+
+        internal static int ThemedPopup(Rect rect, string key, int current, string[] options)
+        {
+            if (options == null || options.Length == 0) return current;
+            key ??= string.Empty;
+            current = Mathf.Clamp(current, 0, options.Length - 1);
+
+            if (PendingPopupSelections.TryGetValue(key, out int pending))
+            {
+                PendingPopupSelections.Remove(key);
+                current = Mathf.Clamp(pending, 0, options.Length - 1);
+                GUI.changed = true;
+            }
+
+            bool isOpen = _activePopupWindow != null && string.Equals(_activePopupKey, key, StringComparison.Ordinal);
+            if (DrawThemedPopupField(rect, current, options, isOpen))
+            {
+                if (isOpen)
+                    CloseActivePopupAnimated();
+                else if (!ConsumePopupReopenSuppression(key))
+                    ShowPopupWindow(key, rect, current, options);
+            }
+
+            return current;
+        }
+
+        internal static void CloseActivePopup()
+        {
+            if (_activePopupWindow != null)
+                _activePopupWindow.Close();
+            ClearActivePopupState();
+        }
+
+        private static bool DrawThemedPopupField(Rect rect, int current, string[] options, bool isOpen)
+        {
+            Event evt = Event.current;
+            bool hovered = rect.Contains(evt.mousePosition) && GUI.enabled;
+            bool active = isOpen || (GUIUtility.hotControl != 0 && hovered);
+
+            if (evt.type == EventType.Repaint)
+            {
+                Color fill = active ? Theme.ButtonActive : hovered ? Theme.ButtonHover : Theme.ButtonNormal;
+                Color edge = active
+                    ? new Color(0.38f, 0.82f, 0.86f, 0.88f)
+                    : hovered ? new Color(0.38f, 0.82f, 0.86f, 0.56f) : Theme.BorderColor;
+
+                EditorGUI.DrawRect(rect, fill);
+                Theme.DrawBorder(rect);
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 2f, rect.height), edge);
+
+                var textRect = new Rect(rect.x + 8f, rect.y, Mathf.Max(0f, rect.width - 30f), rect.height);
+                var arrowRect = new Rect(rect.xMax - 20f, rect.y, 16f, rect.height);
+                GUI.Label(textRect, options[current], Styles.PopupValue);
+                GUI.Label(arrowRect, isOpen ? "▴" : "▾", Styles.PopupArrow);
+            }
+
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+            return GUI.Button(rect, GUIContent.none, GUIStyle.none);
+        }
+
+        private static void ShowPopupWindow(string key, Rect anchorRect, int current, string[] options)
+        {
+            CloseActivePopup();
+            var window = new ThemedPopupWindow();
+            window.Initialize(key, options, current, Mathf.Max(120f, anchorRect.width));
+            _activePopupWindow = window;
+            _activePopupKey = key;
+            PopupWindow.Show(anchorRect, window);
+        }
+
+        private static void QueuePopupSelection(string key, int selected)
+        {
+            PendingPopupSelections[key] = selected;
+            GUI.changed = true;
+            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+        }
+
+        private static void SuppressPopupReopen(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            _suppressPopupOpenKey = key;
+            _suppressPopupOpenUntil = EditorApplication.timeSinceStartup + 0.30;
+        }
+
+        private static bool ConsumePopupReopenSuppression(string key)
+        {
+            if (string.IsNullOrEmpty(_suppressPopupOpenKey)) return false;
+            if (EditorApplication.timeSinceStartup > _suppressPopupOpenUntil)
+            {
+                _suppressPopupOpenKey = null;
+                _suppressPopupOpenUntil = 0.0;
+                return false;
+            }
+
+            if (!string.Equals(_suppressPopupOpenKey, key, StringComparison.Ordinal)) return false;
+            _suppressPopupOpenKey = null;
+            _suppressPopupOpenUntil = 0.0;
+            return true;
+        }
+
+        private static void CloseActivePopupAnimated()
+        {
+            if (_activePopupWindow == null)
+            {
+                ClearActivePopupState();
+                return;
+            }
+
+            SuppressPopupReopen(_activePopupKey);
+            _activePopupWindow.BeginClose();
+        }
+
+        private static void ClearActivePopupState()
+        {
+            _activePopupWindow = null;
+            _activePopupKey = null;
+        }
+
+        private sealed class ThemedPopupWindow : PopupWindowContent
+        {
+            private const float RowHeight = 22f;
+            private const float Padding = 2f;
+            private const double AnimationDuration = 0.12;
+
+            private string _key;
+            private string[] _options = Array.Empty<string>();
+            private int _current;
+            private int _hovered = -1;
+            private float _requestedWidth;
+            private Vector2 _scroll;
+            private double _openTime;
+            private double _closeTime;
+            private bool _closing;
+            private bool _closed;
+
+            internal void Initialize(string key, string[] options, int current, float requestedWidth)
+            {
+                _key = key;
+                _options = options ?? Array.Empty<string>();
+                _current = Mathf.Clamp(current, 0, Mathf.Max(0, _options.Length - 1));
+                _requestedWidth = requestedWidth;
+                _openTime = EditorApplication.timeSinceStartup;
+            }
+
+            public override Vector2 GetWindowSize()
+            {
+                float height = Mathf.Min(352f, Mathf.Max(26f, _options.Length * RowHeight + Padding * 2f));
+                return new Vector2(_requestedWidth, height);
+            }
+
+            public override void OnOpen()
+            {
+                _openTime = EditorApplication.timeSinceStartup;
+                if (editorWindow != null) editorWindow.wantsMouseMove = true;
+            }
+
+            internal void BeginClose()
+            {
+                if (_closing) return;
+                _closing = true;
+                _closeTime = EditorApplication.timeSinceStartup;
+                editorWindow?.Repaint();
+            }
+
+            internal void Close()
+            {
+                if (editorWindow != null) editorWindow.Close();
+                else NotifyClosed();
+            }
+
+            public override void OnClose()
+            {
+                SuppressPopupReopen(_key);
+                NotifyClosed();
+            }
+
+            private void NotifyClosed()
+            {
+                if (_closed) return;
+                _closed = true;
+                if (_activePopupWindow == this) ClearActivePopupState();
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            }
+
+            public override void OnGUI(Rect windowRect)
+            {
+                Event evt = Event.current;
+                double now = EditorApplication.timeSinceStartup;
+                float rawT = _closing
+                    ? 1f - (float)((now - _closeTime) / AnimationDuration)
+                    : (float)((now - _openTime) / AnimationDuration);
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(rawT));
+
+                if (_closing && rawT <= 0f)
+                {
+                    Close();
+                    return;
+                }
+
+                float contentHeight = _options.Length * RowHeight + Padding * 2f;
+                bool needsScroll = contentHeight > windowRect.height;
+                Rect viewport = new Rect(0f, 0f, windowRect.width, windowRect.height);
+                Rect content = new Rect(0f, 0f, needsScroll ? windowRect.width - 13f : windowRect.width, contentHeight);
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    EditorGUI.DrawRect(viewport, new Color(0.085f, 0.09f, 0.095f, t));
+                    Theme.DrawBorder(viewport);
+                }
+
+                if (needsScroll) _scroll = GUI.BeginScrollView(viewport, _scroll, content, false, true);
+                float slide = Mathf.Lerp(-6f, 0f, t);
+                Rect panel = new Rect(0f, slide, content.width, content.height);
+
+                int hovered = -1;
+                for (int i = 0; i < _options.Length; i++)
+                {
+                    Rect row = GetRowRect(panel, i);
+                    if (row.Contains(evt.mousePosition)) hovered = i;
+                }
+                if (hovered != _hovered)
+                {
+                    _hovered = hovered;
+                    editorWindow?.Repaint();
+                }
+
+                if (evt.type == EventType.MouseDown && evt.button == 0 && _hovered >= 0)
+                {
+                    QueuePopupSelection(_key, _hovered);
+                    evt.Use();
+                    BeginClose();
+                }
+                else if (evt.type == EventType.KeyDown && evt.keyCode == KeyCode.Escape)
+                {
+                    evt.Use();
+                    BeginClose();
+                }
+
+                if (evt.type == EventType.Repaint)
+                    DrawRows(panel, t);
+
+                if (_hovered >= 0)
+                    EditorGUIUtility.AddCursorRect(GetRowRect(panel, _hovered), MouseCursor.Link);
+                if (needsScroll) GUI.EndScrollView();
+                if (!_closing && rawT < 1f || _closing) editorWindow?.Repaint();
+            }
+
+            private static Rect GetRowRect(Rect panel, int index)
+                => new(panel.x + Padding, panel.y + Padding + index * RowHeight, Mathf.Max(0f, panel.width - Padding * 2f), RowHeight);
+
+            private void DrawRows(Rect panel, float t)
+            {
+                for (int i = 0; i < _options.Length; i++)
+                {
+                    Rect row = GetRowRect(panel, i);
+                    bool selected = i == _current;
+                    bool hovered = i == _hovered;
+                    Color fill = selected
+                        ? new Color(0.18f, 0.45f, 0.50f, 0.60f * t)
+                        : hovered ? new Color(1f, 1f, 1f, 0.08f * t) : new Color(1f, 1f, 1f, 0.018f * t);
+                    EditorGUI.DrawRect(row, fill);
+                    if (selected) EditorGUI.DrawRect(new Rect(row.x, row.y, 2f, row.height), new Color(0.38f, 0.82f, 0.86f, t));
+
+                    var style = new GUIStyle(Styles.PopupValue)
+                    {
+                        alignment = TextAnchor.MiddleLeft,
+                        padding = new RectOffset(selected ? 10 : 8, 4, 0, 0)
+                    };
+                    style.normal.textColor = new Color(1f, 1f, 1f, (selected || hovered ? 0.94f : 0.70f) * t);
+                    GUI.Label(row, _options[i], style);
+                }
+            }
+        }
 
         internal static bool ResetPill(string label, params GUILayoutOption[] options)
             => PillButton(label, 18f, Styles.ResetButton, options);

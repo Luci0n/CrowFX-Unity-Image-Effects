@@ -1,0 +1,15 @@
+{
+    "name": "CrowFX.Editor.Tests",
+    "rootNamespace": "CrowFX.Tests",
+    "references": [
+        "GUID:9c468bcdc8b9d6544a8ec53f4f7984ae"
+    ],
+    "includePlatforms": ["Editor"],
+    "optionalUnityReferences": ["TestAssemblies"],
+    "autoReferenced": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

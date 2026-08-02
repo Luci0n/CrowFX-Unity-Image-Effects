@@ -8,6 +8,8 @@ namespace CrowFX
     {
         [Tooltip("Global opacity for the entire CrowFX stack.")]
         [Range(0f, 1f)] public float masterBlend = 1f;
+        public CrowImageEffects.QualityTier qualityTier = CrowImageEffects.QualityTier.Balanced;
+        public CrowImageEffects.MaskPlacement maskPlacement = CrowImageEffects.MaskPlacement.EntireStack;
     }
 
     [Serializable]
@@ -19,6 +21,9 @@ namespace CrowFX
         public bool useVirtualGrid = false;
         [Tooltip("Virtual resolution used when Lock to Virtual Grid is enabled.")]
         public Vector2Int virtualResolution = new Vector2Int(720, 480);
+        public Vector2 samplingPhase = Vector2.zero;
+        [Range(0.25f, 4f)] public float pixelAspect = 1f;
+        public CrowImageEffects.SamplingFilter samplingFilter = CrowImageEffects.SamplingFilter.Point;
     }
 
     [Serializable]
@@ -28,33 +33,42 @@ namespace CrowFX
         public bool pregradeEnabled = false;
         [Tooltip("Brightness adjustment applied before posterization.")]
         [Range(-5f, 5f)] public float exposure = 0f;
-        [Tooltip("Contrast multiplier applied before posterization.")]
+        [Tooltip("Endpoint-preserving luminance contrast curve. Values above 1 add contrast without hard black or white clipping.")]
         [Range(0f, 2f)] public float contrast = 1f;
         [Tooltip("Gamma correction applied before posterization.")]
         [Range(0.1f, 3f)] public float gamma = 1f;
         [Tooltip("Color saturation applied before posterization.")]
         [Range(0f, 2f)] public float saturation = 1f;
+        [Tooltip("Color filter applied after saturation while approximately preserving luminance.")]
+        public Color pregradeTint = Color.white;
+        [Tooltip("Strength of the pre-grade color filter.")]
+        [Range(0f, 1f)] public float pregradeTintStrength = 0f;
+        public Color pregradeLift = new Color(0f, 0f, 0f, 0f);
+        public Color pregradeGain = Color.white;
+        public Color pregradeOffset = new Color(0f, 0f, 0f, 0f);
+        [Range(-1f, 1f)] public float pregradeTemperature = 0f;
+        [Range(0f, 2f)] public float pregradeHighlightRolloff = 0.5f;
     }
 
     [Serializable]
     public sealed class CrowFXPosterizeSettings
     {
         [Tooltip("Shared number of quantization levels for all channels.")]
-        [Range(2, 512)] public int levels = 64;
+        [Range(2, 512)] public int levels = 512;
         [Tooltip("Use independent quantization levels for red, green, and blue.")]
         public bool usePerChannel = false;
         [Tooltip("Quantization levels for the red channel.")]
-        [Range(2, 512)] public int levelsR = 64;
+        [Range(2, 512)] public int levelsR = 512;
         [Tooltip("Quantization levels for the green channel.")]
-        [Range(2, 512)] public int levelsG = 64;
+        [Range(2, 512)] public int levelsG = 512;
         [Tooltip("Quantization levels for the blue channel.")]
-        [Range(2, 512)] public int levelsB = 64;
+        [Range(2, 512)] public int levelsB = 512;
         [Tooltip("Animate the shared quantization level count over time.")]
         public bool animateLevels = false;
         [Tooltip("Lower bound used when Animated Levels is enabled.")]
-        [Range(2, 512)] public int minLevels = 64;
+        [Range(2, 512)] public int minLevels = 512;
         [Tooltip("Upper bound used when Animated Levels is enabled.")]
-        [Range(2, 512)] public int maxLevels = 64;
+        [Range(2, 512)] public int maxLevels = 512;
         [Tooltip("Animation speed for cycling quantization levels.")]
         public float speed = 1f;
         [Tooltip("Posterize luminance while preserving overall color relationships.")]
@@ -74,6 +88,8 @@ namespace CrowFX
         public Texture2D paletteTex;
         [Tooltip("Remap tonal values before palette lookup or nearest-color matching.")]
         public AnimationCurve thresholdCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+        [Range(2, 64)] public int paletteColorCount = 16;
+        public bool palettePerceptual = true;
     }
 
     [Serializable]
@@ -85,6 +101,12 @@ namespace CrowFX
         public Texture2D maskTex;
         [Tooltip("Threshold used to cut between masked and unmasked areas.")]
         [Range(0f, 1f)] public float maskThreshold = 0.5f;
+        [Range(0f, 1f)] public float maskSoftness = 0.1f;
+        [Range(0f, 1f)] public float maskOpacity = 1f;
+        public bool maskInvert = false;
+        public CrowImageEffects.MaskChannel maskChannel = CrowImageEffects.MaskChannel.Luminance;
+        public Vector2 maskTiling = Vector2.one;
+        public Vector2 maskOffset = Vector2.zero;
     }
 
     [Serializable]
@@ -94,6 +116,10 @@ namespace CrowFX
         public bool useDepthMask = false;
         [Tooltip("Depth distance where the mask starts attenuating the effect.")]
         [Range(0f, 10f)] public float depthThreshold = 1f;
+        [Range(0f, 1000f)] public float depthFar = 1000f;
+        [Range(0f, 50f)] public float depthSoftness = 0.25f;
+        [Range(0f, 1f)] public float depthOpacity = 1f;
+        public bool depthInvert = false;
     }
 
     [Serializable]
@@ -208,7 +234,7 @@ namespace CrowFX
         [Tooltip("Enable motion-trail ghosting.")]
         public bool ghostEnabled = false;
         [Tooltip("Blend amount of the accumulated history.")]
-        [Range(0f, 1f)] public float ghostBlend = 0.35f;
+        [Range(0f, 1f)] public float ghostBlend = 0.20f;
         [Tooltip("Per-frame offset applied between stored history frames.")]
         public Vector2 ghostOffsetPx = Vector2.zero;
         [Tooltip("Number of previous frames to store in history.")]
@@ -221,6 +247,9 @@ namespace CrowFX
         [Range(0.25f, 4f)] public float ghostWeightCurve = 1.5f;
         [Tooltip("How the history composite blends with the current frame.")]
         public CrowImageEffects.GhostCombineMode ghostCombineMode = CrowImageEffects.GhostCombineMode.Screen;
+        [Range(0.25f, 1f)] public float ghostResolutionScale = 0.5f;
+        [Range(8f, 250f)] public float ghostFrameIntervalMs = 33.333f;
+        [Range(16f, 2000f)] public float ghostDecayMs = 180f;
     }
 
     [Serializable]
@@ -236,6 +265,9 @@ namespace CrowFX
         [Range(0f, 1f)] public float edgeBlend = 1f;
         [Tooltip("Tint used for the outline.")]
         public Color edgeColor = Color.black;
+        [Range(0.5f, 4f)] public float edgeThickness = 1f;
+        public bool edgeUseNormals = true;
+        [Range(0f, 1f)] public float edgeNormalThreshold = 0.18f;
     }
 
     [Serializable]
@@ -253,6 +285,7 @@ namespace CrowFX
         public bool unsharpLumaOnly = false;
         [Tooltip("Additional sharpening applied to chroma when Luma Only is enabled.")]
         [Range(0f, 1f)] public float unsharpChroma = 0f;
+        public CrowImageEffects.SharpenMode sharpenMode = CrowImageEffects.SharpenMode.ContrastAdaptive;
     }
 
     [Serializable]
@@ -266,6 +299,94 @@ namespace CrowFX
         [Range(0f, 180f)] public float ditherAngle = 45f;
         [Tooltip("Blue-noise texture used by Blue Noise mode.")]
         public Texture2D blueNoise;
+        public bool temporalDither = false;
+        [Range(1f, 120f)] public float temporalDitherRate = 30f;
+        [Range(2f, 24f)] public float halftoneScale = 6f;
+        [Range(-0.5f, 0.5f)] public float halftoneDotGain = 0f;
+    }
+
+    [Serializable]
+    public sealed class CrowFXCrtSettings
+    {
+        public bool crtEnabled = false;
+        [Range(0f, 0.35f)] public float crtCurvature = 0.08f;
+        [Range(0.8f, 1.2f)] public float crtOverscan = 1.02f;
+        [Range(0f, 1f)] public float crtScanlineStrength = 0.75f;
+        [Range(0, 1200)] public int crtScanlineCount = 240;
+        [Range(0.2f, 1.5f)] public float crtBeamWidth = 0.5f;
+        public CrowImageEffects.CrtMaskMode crtMaskMode = CrowImageEffects.CrtMaskMode.ApertureGrille;
+        [Range(0f, 1f)] public float crtMaskStrength = 0.35f;
+        [Range(1f, 6f)] public float crtMaskScale = 1f;
+        [Range(0f, 1.5f)] public float crtBloom = 0.2f;
+        [Range(0.5f, 4f)] public float crtBloomRadius = 1.5f;
+        [Range(0f, 1f)] public float crtVignette = 0.35f;
+        [Range(0.01f, 0.5f)] public float crtVignetteSoftness = 0.18f;
+        [Range(0f, 0.2f)] public float crtNoise = 0.015f;
+        [Range(0f, 0.2f)] public float crtFlicker = 0.015f;
+        [Range(0.5f, 3f)] public float crtBrightness = 1.2f;
+        [Range(0f, 1f)] public float crtTubeEdge = 1f;
+        [Range(0f, 2f)] public float crtBloomThreshold = 0.55f;
+        [Range(0f, 3f)] public float crtConvergencePx = 0f;
+        [Range(0f, 1f)] public float crtFocus = 0.35f;
+        [Range(0f, 0.2f)] public float crtBlackLevel = 0f;
+        [Range(0f, 0.2f)] public float crtHumBar = 0f;
+        [Range(24f, 120f)] public float crtFlickerHz = 60f;
+    }
+
+    [Serializable]
+    public sealed class CrowFXVhsSettings
+    {
+        public bool vhsEnabled = false;
+        [Range(0f, 1f)] public float vhsIntensity = 0.8f;
+        [Range(0f, 4f)] public float vhsTapeSpeed = 1f;
+        [Range(0f, 12f)] public float vhsHorizontalJitter = 1.5f;
+        [Range(0f, 12f)] public float vhsLineWobble = 2f;
+        [Range(0f, 1f)] public float vhsTracking = 0.25f;
+        [Range(-4f, 4f)] public float vhsTrackingSpeed = 0.65f;
+        [Range(0.005f, 0.25f)] public float vhsTrackingWidth = 0.055f;
+        [Range(-12f, 12f)] public float vhsChromaBleed = 3f;
+        [Range(0f, 12f)] public float vhsChromaBlur = 4f;
+        [Range(0f, 1f)] public float vhsColorLoss = 0.15f;
+        [Range(0f, 0.35f)] public float vhsLumaNoise = 0.055f;
+        [Range(0f, 0.35f)] public float vhsChromaNoise = 0.025f;
+        [Range(0f, 1f)] public float vhsDropout = 0.12f;
+        [Range(0f, 1f)] public float vhsHeadSwitching = 0.2f;
+        [Range(0.005f, 0.2f)] public float vhsHeadSwitchHeight = 0.045f;
+        [Range(0f, 1f)] public float vhsInterlace = 0.12f;
+        public CrowImageEffects.VhsStandard vhsStandard = CrowImageEffects.VhsStandard.NTSC;
+        public CrowImageEffects.VhsTapeMode vhsTapeMode = CrowImageEffects.VhsTapeMode.SP;
+        [Range(0, 8)] public int vhsGeneration = 0;
+        [Range(0f, 1f)] public float vhsAgcInstability = 0.08f;
+        [Range(0f, 4f)] public float vhsVerticalChromaBlur = 1f;
+    }
+
+    [Serializable]
+    public sealed class CrowFXProfessionalSettings
+    {
+        public bool lensSensorEnabled; [Range(0f,1f)] public float lensSensorIntensity = 1f;
+        [Range(-0.5f,0.5f)] public float lensDistortion; [Range(0f,8f)] public float lensChromaticAberration;
+        [Range(0f,1f)] public float lensVignette; [Range(0f,2f)] public float lensBloom; [Range(0.5f,8f)] public float lensBloomRadius = 2f;
+        [Range(0f,12f)] public float sensorRollingShutter; [Range(0f,0.25f)] public float sensorNoise; [Range(0f,1f)] public float sensorDeadPixels;
+
+        public bool filmEnabled; [Range(0f,1f)] public float filmIntensity = 1f; [Range(0f,0.5f)] public float filmGrain = 0.08f;
+        [Range(0.5f,4f)] public float filmGrainSize = 1f; [Range(0f,2f)] public float filmHalation = 0.15f; [Range(0.5f,8f)] public float filmHalationRadius = 2f;
+        [Range(0f,6f)] public float filmGateWeave = 0.25f; [Range(0f,1f)] public float filmDust; [Range(0f,1f)] public float filmScratches; [Range(0f,0.2f)] public float filmFlicker = 0.01f;
+
+        public bool motionGlitchEnabled; [Range(0f,1f)] public float motionGlitchIntensity = 0.6f; [Range(4f,128f)] public float motionBlockSize = 32f;
+        [Range(0f,8f)] public float motionVectorDisplacement = 2f; [Range(0f,1f)] public float motionFreezeRate = 0.1f; [Range(0f,8f)] public float motionColorSplit;
+        [Range(0.25f,1f)] public float motionHistoryScale = 0.5f; [Range(1f,60f)] public float motionHistoryFps = 24f;
+
+        public bool digitalVideoEnabled; [Range(0f,1f)] public float digitalVideoIntensity = 0.7f; [Range(4f,64f)] public float digitalBlockSize = 16f;
+        [Range(0f,1f)] public float digitalQuantization = 0.25f; [Range(0f,1f)] public float digitalRinging = 0.1f;
+        [Range(0f,1f)] public float digitalChromaSubsampling = 0.35f; [Range(0f,1f)] public float digitalMosquitoNoise = 0.05f; [Range(0f,1f)] public float digitalBitratePumping;
+
+        public bool compositeEnabled; [Range(0f,1f)] public float compositeIntensity = 0.7f; public CrowImageEffects.VhsStandard compositeStandard;
+        [Range(0f,1f)] public float compositeDotCrawl = 0.25f; [Range(0f,1f)] public float compositeRainbow = 0.15f;
+        [Range(0f,1f)] public float compositeChromaBandwidth = 0.55f; [Range(0f,1f)] public float compositePhaseError = 0.05f; [Range(0f,1f)] public float compositeCombFilter = 0.5f;
+
+        public bool lcdEnabled; [Range(0f,1f)] public float lcdIntensity = 0.8f; [Range(1f,8f)] public float lcdPixelScale = 2f;
+        [Range(0f,1f)] public float lcdSubpixelStrength = 0.35f; [Range(0f,1f)] public float lcdInversion = 0.03f; [Range(-1f,1f)] public float lcdViewingAngle;
+        [Range(0f,1f)] public float lcdBacklightBleed = 0.05f; [Range(0f,4f)] public float lcdResponseSmear = 0.4f;
     }
 
     [CreateAssetMenu(fileName = "CrowFXProfile", menuName = "CrowFX/CrowFX Profile")]
@@ -297,20 +418,38 @@ namespace CrowFX
         public CrowFXUnsharpSettings unsharp = new CrowFXUnsharpSettings();
         [Tooltip("Dithering settings shared by linked CrowFX components.")]
         public CrowFXDitherSettings dither = new CrowFXDitherSettings();
+        [Tooltip("CRT display simulation settings shared by linked CrowFX components.")]
+        public CrowFXCrtSettings crt = new CrowFXCrtSettings();
+        [Tooltip("VHS tape simulation settings shared by linked CrowFX components.")]
+        public CrowFXVhsSettings vhs = new CrowFXVhsSettings();
+        [Tooltip("Lens, film, compression, composite, LCD and motion-processing settings.")]
+        public CrowFXProfessionalSettings professional = new CrowFXProfessionalSettings();
 
         public void ApplyTo(CrowImageEffects fx)
         {
             if (fx == null) return;
 
             fx.masterBlend = master.masterBlend;
+            fx.qualityTier = master.qualityTier;
+            fx.maskPlacement = master.maskPlacement;
             fx.pixelSize = sampling.pixelSize;
             fx.useVirtualGrid = sampling.useVirtualGrid;
             fx.virtualResolution = sampling.virtualResolution;
+            fx.samplingPhase = sampling.samplingPhase;
+            fx.pixelAspect = sampling.pixelAspect;
+            fx.samplingFilter = sampling.samplingFilter;
             fx.pregradeEnabled = pregrade.pregradeEnabled;
             fx.exposure = pregrade.exposure;
             fx.contrast = pregrade.contrast;
             fx.gamma = pregrade.gamma;
             fx.saturation = pregrade.saturation;
+            fx.pregradeTint = pregrade.pregradeTint;
+            fx.pregradeTintStrength = pregrade.pregradeTintStrength;
+            fx.pregradeLift = pregrade.pregradeLift;
+            fx.pregradeGain = pregrade.pregradeGain;
+            fx.pregradeOffset = pregrade.pregradeOffset;
+            fx.pregradeTemperature = pregrade.pregradeTemperature;
+            fx.pregradeHighlightRolloff = pregrade.pregradeHighlightRolloff;
             fx.levels = posterize.levels;
             fx.usePerChannel = posterize.usePerChannel;
             fx.levelsR = posterize.levelsR;
@@ -326,11 +465,23 @@ namespace CrowFX
             fx.paletteMode = palette.paletteMode;
             fx.paletteTex = palette.paletteTex;
             fx.thresholdCurve = CloneCurve(palette.thresholdCurve);
+            fx.paletteColorCount = palette.paletteColorCount;
+            fx.palettePerceptual = palette.palettePerceptual;
             fx.useMask = textureMask.useMask;
             fx.maskTex = textureMask.maskTex;
             fx.maskThreshold = textureMask.maskThreshold;
+            fx.maskSoftness = textureMask.maskSoftness;
+            fx.maskOpacity = textureMask.maskOpacity;
+            fx.maskInvert = textureMask.maskInvert;
+            fx.maskChannel = textureMask.maskChannel;
+            fx.maskTiling = textureMask.maskTiling;
+            fx.maskOffset = textureMask.maskOffset;
             fx.useDepthMask = depthMask.useDepthMask;
             fx.depthThreshold = depthMask.depthThreshold;
+            fx.depthFar = depthMask.depthFar;
+            fx.depthSoftness = depthMask.depthSoftness;
+            fx.depthOpacity = depthMask.depthOpacity;
+            fx.depthInvert = depthMask.depthInvert;
             fx.jitterEnabled = jitter.jitterEnabled;
             fx.jitterStrength = jitter.jitterStrength;
             fx.jitterMode = jitter.jitterMode;
@@ -387,36 +538,106 @@ namespace CrowFX
             fx.ghostStartDelay = ghost.ghostStartDelay;
             fx.ghostWeightCurve = ghost.ghostWeightCurve;
             fx.ghostCombineMode = ghost.ghostCombineMode;
+            fx.ghostResolutionScale = ghost.ghostResolutionScale;
+            fx.ghostFrameIntervalMs = ghost.ghostFrameIntervalMs;
+            fx.ghostDecayMs = ghost.ghostDecayMs;
             fx.unsharpEnabled = unsharp.unsharpEnabled;
             fx.unsharpAmount = unsharp.unsharpAmount;
             fx.unsharpRadius = unsharp.unsharpRadius;
             fx.unsharpThreshold = unsharp.unsharpThreshold;
             fx.unsharpLumaOnly = unsharp.unsharpLumaOnly;
             fx.unsharpChroma = unsharp.unsharpChroma;
+            fx.sharpenMode = unsharp.sharpenMode;
             fx.edgeEnabled = edges.edgeEnabled;
             fx.edgeStrength = edges.edgeStrength;
             fx.edgeThreshold = edges.edgeThreshold;
             fx.edgeBlend = edges.edgeBlend;
             fx.edgeColor = edges.edgeColor;
+            fx.edgeThickness = edges.edgeThickness;
+            fx.edgeUseNormals = edges.edgeUseNormals;
+            fx.edgeNormalThreshold = edges.edgeNormalThreshold;
             fx.ditherMode = dither.ditherMode;
             fx.ditherStrength = dither.ditherStrength;
             fx.ditherAngle = dither.ditherAngle;
             fx.blueNoise = dither.blueNoise;
+            fx.temporalDither = dither.temporalDither;
+            fx.temporalDitherRate = dither.temporalDitherRate;
+            fx.halftoneScale = dither.halftoneScale;
+            fx.halftoneDotGain = dither.halftoneDotGain;
+            fx.crtEnabled = crt.crtEnabled;
+            fx.crtCurvature = crt.crtCurvature;
+            fx.crtOverscan = crt.crtOverscan;
+            fx.crtScanlineStrength = crt.crtScanlineStrength;
+            fx.crtScanlineCount = crt.crtScanlineCount;
+            fx.crtBeamWidth = crt.crtBeamWidth;
+            fx.crtMaskMode = crt.crtMaskMode;
+            fx.crtMaskStrength = crt.crtMaskStrength;
+            fx.crtMaskScale = crt.crtMaskScale;
+            fx.crtBloom = crt.crtBloom;
+            fx.crtBloomRadius = crt.crtBloomRadius;
+            fx.crtVignette = crt.crtVignette;
+            fx.crtVignetteSoftness = crt.crtVignetteSoftness;
+            fx.crtNoise = crt.crtNoise;
+            fx.crtFlicker = crt.crtFlicker;
+            fx.crtBrightness = crt.crtBrightness;
+            fx.crtTubeEdge = crt.crtTubeEdge;
+            fx.crtBloomThreshold = crt.crtBloomThreshold;
+            fx.crtConvergencePx = crt.crtConvergencePx;
+            fx.crtFocus = crt.crtFocus;
+            fx.crtBlackLevel = crt.crtBlackLevel;
+            fx.crtHumBar = crt.crtHumBar;
+            fx.crtFlickerHz = crt.crtFlickerHz;
+            fx.vhsEnabled = vhs.vhsEnabled;
+            fx.vhsIntensity = vhs.vhsIntensity;
+            fx.vhsTapeSpeed = vhs.vhsTapeSpeed;
+            fx.vhsHorizontalJitter = vhs.vhsHorizontalJitter;
+            fx.vhsLineWobble = vhs.vhsLineWobble;
+            fx.vhsTracking = vhs.vhsTracking;
+            fx.vhsTrackingSpeed = vhs.vhsTrackingSpeed;
+            fx.vhsTrackingWidth = vhs.vhsTrackingWidth;
+            fx.vhsChromaBleed = vhs.vhsChromaBleed;
+            fx.vhsChromaBlur = vhs.vhsChromaBlur;
+            fx.vhsColorLoss = vhs.vhsColorLoss;
+            fx.vhsLumaNoise = vhs.vhsLumaNoise;
+            fx.vhsChromaNoise = vhs.vhsChromaNoise;
+            fx.vhsDropout = vhs.vhsDropout;
+            fx.vhsHeadSwitching = vhs.vhsHeadSwitching;
+            fx.vhsHeadSwitchHeight = vhs.vhsHeadSwitchHeight;
+            fx.vhsInterlace = vhs.vhsInterlace;
+            fx.vhsStandard = vhs.vhsStandard;
+            fx.vhsTapeMode = vhs.vhsTapeMode;
+            fx.vhsGeneration = vhs.vhsGeneration;
+            fx.vhsAgcInstability = vhs.vhsAgcInstability;
+            fx.vhsVerticalChromaBlur = vhs.vhsVerticalChromaBlur;
+            ApplyProfessional(fx, professional);
         }
 
         public void CaptureFrom(CrowImageEffects fx)
         {
             if (fx == null) return;
+            if (professional == null) professional = new CrowFXProfessionalSettings();
 
             master.masterBlend = fx.masterBlend;
+            master.qualityTier = fx.qualityTier;
+            master.maskPlacement = fx.maskPlacement;
             sampling.pixelSize = fx.pixelSize;
             sampling.useVirtualGrid = fx.useVirtualGrid;
             sampling.virtualResolution = fx.virtualResolution;
+            sampling.samplingPhase = fx.samplingPhase;
+            sampling.pixelAspect = fx.pixelAspect;
+            sampling.samplingFilter = fx.samplingFilter;
             pregrade.pregradeEnabled = fx.pregradeEnabled;
             pregrade.exposure = fx.exposure;
             pregrade.contrast = fx.contrast;
             pregrade.gamma = fx.gamma;
             pregrade.saturation = fx.saturation;
+            pregrade.pregradeTint = fx.pregradeTint;
+            pregrade.pregradeTintStrength = fx.pregradeTintStrength;
+            pregrade.pregradeLift = fx.pregradeLift;
+            pregrade.pregradeGain = fx.pregradeGain;
+            pregrade.pregradeOffset = fx.pregradeOffset;
+            pregrade.pregradeTemperature = fx.pregradeTemperature;
+            pregrade.pregradeHighlightRolloff = fx.pregradeHighlightRolloff;
             posterize.levels = fx.levels;
             posterize.usePerChannel = fx.usePerChannel;
             posterize.levelsR = fx.levelsR;
@@ -432,11 +653,23 @@ namespace CrowFX
             palette.paletteMode = fx.paletteMode;
             palette.paletteTex = fx.paletteTex;
             palette.thresholdCurve = CloneCurve(fx.thresholdCurve);
+            palette.paletteColorCount = fx.paletteColorCount;
+            palette.palettePerceptual = fx.palettePerceptual;
             textureMask.useMask = fx.useMask;
             textureMask.maskTex = fx.maskTex;
             textureMask.maskThreshold = fx.maskThreshold;
+            textureMask.maskSoftness = fx.maskSoftness;
+            textureMask.maskOpacity = fx.maskOpacity;
+            textureMask.maskInvert = fx.maskInvert;
+            textureMask.maskChannel = fx.maskChannel;
+            textureMask.maskTiling = fx.maskTiling;
+            textureMask.maskOffset = fx.maskOffset;
             depthMask.useDepthMask = fx.useDepthMask;
             depthMask.depthThreshold = fx.depthThreshold;
+            depthMask.depthFar = fx.depthFar;
+            depthMask.depthSoftness = fx.depthSoftness;
+            depthMask.depthOpacity = fx.depthOpacity;
+            depthMask.depthInvert = fx.depthInvert;
             jitter.jitterEnabled = fx.jitterEnabled;
             jitter.jitterStrength = fx.jitterStrength;
             jitter.jitterMode = fx.jitterMode;
@@ -493,21 +726,120 @@ namespace CrowFX
             ghost.ghostStartDelay = fx.ghostStartDelay;
             ghost.ghostWeightCurve = fx.ghostWeightCurve;
             ghost.ghostCombineMode = fx.ghostCombineMode;
+            ghost.ghostResolutionScale = fx.ghostResolutionScale;
+            ghost.ghostFrameIntervalMs = fx.ghostFrameIntervalMs;
+            ghost.ghostDecayMs = fx.ghostDecayMs;
             unsharp.unsharpEnabled = fx.unsharpEnabled;
             unsharp.unsharpAmount = fx.unsharpAmount;
             unsharp.unsharpRadius = fx.unsharpRadius;
             unsharp.unsharpThreshold = fx.unsharpThreshold;
             unsharp.unsharpLumaOnly = fx.unsharpLumaOnly;
             unsharp.unsharpChroma = fx.unsharpChroma;
+            unsharp.sharpenMode = fx.sharpenMode;
             edges.edgeEnabled = fx.edgeEnabled;
             edges.edgeStrength = fx.edgeStrength;
             edges.edgeThreshold = fx.edgeThreshold;
             edges.edgeBlend = fx.edgeBlend;
             edges.edgeColor = fx.edgeColor;
+            edges.edgeThickness = fx.edgeThickness;
+            edges.edgeUseNormals = fx.edgeUseNormals;
+            edges.edgeNormalThreshold = fx.edgeNormalThreshold;
             dither.ditherMode = fx.ditherMode;
             dither.ditherStrength = fx.ditherStrength;
             dither.ditherAngle = fx.ditherAngle;
             dither.blueNoise = fx.blueNoise;
+            dither.temporalDither = fx.temporalDither;
+            dither.temporalDitherRate = fx.temporalDitherRate;
+            dither.halftoneScale = fx.halftoneScale;
+            dither.halftoneDotGain = fx.halftoneDotGain;
+            crt.crtEnabled = fx.crtEnabled;
+            crt.crtCurvature = fx.crtCurvature;
+            crt.crtOverscan = fx.crtOverscan;
+            crt.crtScanlineStrength = fx.crtScanlineStrength;
+            crt.crtScanlineCount = fx.crtScanlineCount;
+            crt.crtBeamWidth = fx.crtBeamWidth;
+            crt.crtMaskMode = fx.crtMaskMode;
+            crt.crtMaskStrength = fx.crtMaskStrength;
+            crt.crtMaskScale = fx.crtMaskScale;
+            crt.crtBloom = fx.crtBloom;
+            crt.crtBloomRadius = fx.crtBloomRadius;
+            crt.crtVignette = fx.crtVignette;
+            crt.crtVignetteSoftness = fx.crtVignetteSoftness;
+            crt.crtNoise = fx.crtNoise;
+            crt.crtFlicker = fx.crtFlicker;
+            crt.crtBrightness = fx.crtBrightness;
+            crt.crtTubeEdge = fx.crtTubeEdge;
+            crt.crtBloomThreshold = fx.crtBloomThreshold;
+            crt.crtConvergencePx = fx.crtConvergencePx;
+            crt.crtFocus = fx.crtFocus;
+            crt.crtBlackLevel = fx.crtBlackLevel;
+            crt.crtHumBar = fx.crtHumBar;
+            crt.crtFlickerHz = fx.crtFlickerHz;
+            vhs.vhsEnabled = fx.vhsEnabled;
+            vhs.vhsIntensity = fx.vhsIntensity;
+            vhs.vhsTapeSpeed = fx.vhsTapeSpeed;
+            vhs.vhsHorizontalJitter = fx.vhsHorizontalJitter;
+            vhs.vhsLineWobble = fx.vhsLineWobble;
+            vhs.vhsTracking = fx.vhsTracking;
+            vhs.vhsTrackingSpeed = fx.vhsTrackingSpeed;
+            vhs.vhsTrackingWidth = fx.vhsTrackingWidth;
+            vhs.vhsChromaBleed = fx.vhsChromaBleed;
+            vhs.vhsChromaBlur = fx.vhsChromaBlur;
+            vhs.vhsColorLoss = fx.vhsColorLoss;
+            vhs.vhsLumaNoise = fx.vhsLumaNoise;
+            vhs.vhsChromaNoise = fx.vhsChromaNoise;
+            vhs.vhsDropout = fx.vhsDropout;
+            vhs.vhsHeadSwitching = fx.vhsHeadSwitching;
+            vhs.vhsHeadSwitchHeight = fx.vhsHeadSwitchHeight;
+            vhs.vhsInterlace = fx.vhsInterlace;
+            vhs.vhsStandard = fx.vhsStandard;
+            vhs.vhsTapeMode = fx.vhsTapeMode;
+            vhs.vhsGeneration = fx.vhsGeneration;
+            vhs.vhsAgcInstability = fx.vhsAgcInstability;
+            vhs.vhsVerticalChromaBlur = fx.vhsVerticalChromaBlur;
+            CaptureProfessional(fx, professional);
+        }
+
+        private static void ApplyProfessional(CrowImageEffects fx, CrowFXProfessionalSettings p)
+        {
+            if (p == null) return;
+            fx.lensSensorEnabled=p.lensSensorEnabled; fx.lensSensorIntensity=p.lensSensorIntensity; fx.lensDistortion=p.lensDistortion;
+            fx.lensChromaticAberration=p.lensChromaticAberration; fx.lensVignette=p.lensVignette; fx.lensBloom=p.lensBloom; fx.lensBloomRadius=p.lensBloomRadius;
+            fx.sensorRollingShutter=p.sensorRollingShutter; fx.sensorNoise=p.sensorNoise; fx.sensorDeadPixels=p.sensorDeadPixels;
+            fx.filmEnabled=p.filmEnabled; fx.filmIntensity=p.filmIntensity; fx.filmGrain=p.filmGrain; fx.filmGrainSize=p.filmGrainSize;
+            fx.filmHalation=p.filmHalation; fx.filmHalationRadius=p.filmHalationRadius; fx.filmGateWeave=p.filmGateWeave; fx.filmDust=p.filmDust;
+            fx.filmScratches=p.filmScratches; fx.filmFlicker=p.filmFlicker;
+            fx.motionGlitchEnabled=p.motionGlitchEnabled; fx.motionGlitchIntensity=p.motionGlitchIntensity; fx.motionBlockSize=p.motionBlockSize;
+            fx.motionVectorDisplacement=p.motionVectorDisplacement; fx.motionFreezeRate=p.motionFreezeRate; fx.motionColorSplit=p.motionColorSplit; fx.motionHistoryScale=p.motionHistoryScale; fx.motionHistoryFps=p.motionHistoryFps;
+            fx.digitalVideoEnabled=p.digitalVideoEnabled; fx.digitalVideoIntensity=p.digitalVideoIntensity; fx.digitalBlockSize=p.digitalBlockSize;
+            fx.digitalQuantization=p.digitalQuantization; fx.digitalRinging=p.digitalRinging; fx.digitalChromaSubsampling=p.digitalChromaSubsampling;
+            fx.digitalMosquitoNoise=p.digitalMosquitoNoise; fx.digitalBitratePumping=p.digitalBitratePumping;
+            fx.compositeEnabled=p.compositeEnabled; fx.compositeIntensity=p.compositeIntensity; fx.compositeStandard=p.compositeStandard;
+            fx.compositeDotCrawl=p.compositeDotCrawl; fx.compositeRainbow=p.compositeRainbow; fx.compositeChromaBandwidth=p.compositeChromaBandwidth;
+            fx.compositePhaseError=p.compositePhaseError; fx.compositeCombFilter=p.compositeCombFilter;
+            fx.lcdEnabled=p.lcdEnabled; fx.lcdIntensity=p.lcdIntensity; fx.lcdPixelScale=p.lcdPixelScale; fx.lcdSubpixelStrength=p.lcdSubpixelStrength;
+            fx.lcdInversion=p.lcdInversion; fx.lcdViewingAngle=p.lcdViewingAngle; fx.lcdBacklightBleed=p.lcdBacklightBleed; fx.lcdResponseSmear=p.lcdResponseSmear;
+        }
+
+        private static void CaptureProfessional(CrowImageEffects fx, CrowFXProfessionalSettings p)
+        {
+            if (p == null) return;
+            p.lensSensorEnabled=fx.lensSensorEnabled; p.lensSensorIntensity=fx.lensSensorIntensity; p.lensDistortion=fx.lensDistortion;
+            p.lensChromaticAberration=fx.lensChromaticAberration; p.lensVignette=fx.lensVignette; p.lensBloom=fx.lensBloom; p.lensBloomRadius=fx.lensBloomRadius;
+            p.sensorRollingShutter=fx.sensorRollingShutter; p.sensorNoise=fx.sensorNoise; p.sensorDeadPixels=fx.sensorDeadPixels;
+            p.filmEnabled=fx.filmEnabled; p.filmIntensity=fx.filmIntensity; p.filmGrain=fx.filmGrain; p.filmGrainSize=fx.filmGrainSize;
+            p.filmHalation=fx.filmHalation; p.filmHalationRadius=fx.filmHalationRadius; p.filmGateWeave=fx.filmGateWeave; p.filmDust=fx.filmDust;
+            p.filmScratches=fx.filmScratches; p.filmFlicker=fx.filmFlicker;
+            p.motionGlitchEnabled=fx.motionGlitchEnabled; p.motionGlitchIntensity=fx.motionGlitchIntensity; p.motionBlockSize=fx.motionBlockSize;
+            p.motionVectorDisplacement=fx.motionVectorDisplacement; p.motionFreezeRate=fx.motionFreezeRate; p.motionColorSplit=fx.motionColorSplit; p.motionHistoryScale=fx.motionHistoryScale; p.motionHistoryFps=fx.motionHistoryFps;
+            p.digitalVideoEnabled=fx.digitalVideoEnabled; p.digitalVideoIntensity=fx.digitalVideoIntensity; p.digitalBlockSize=fx.digitalBlockSize;
+            p.digitalQuantization=fx.digitalQuantization; p.digitalRinging=fx.digitalRinging; p.digitalChromaSubsampling=fx.digitalChromaSubsampling;
+            p.digitalMosquitoNoise=fx.digitalMosquitoNoise; p.digitalBitratePumping=fx.digitalBitratePumping;
+            p.compositeEnabled=fx.compositeEnabled; p.compositeIntensity=fx.compositeIntensity; p.compositeStandard=fx.compositeStandard;
+            p.compositeDotCrawl=fx.compositeDotCrawl; p.compositeRainbow=fx.compositeRainbow; p.compositeChromaBandwidth=fx.compositeChromaBandwidth;
+            p.compositePhaseError=fx.compositePhaseError; p.compositeCombFilter=fx.compositeCombFilter;
+            p.lcdEnabled=fx.lcdEnabled; p.lcdIntensity=fx.lcdIntensity; p.lcdPixelScale=fx.lcdPixelScale; p.lcdSubpixelStrength=fx.lcdSubpixelStrength;
+            p.lcdInversion=fx.lcdInversion; p.lcdViewingAngle=fx.lcdViewingAngle; p.lcdBacklightBleed=fx.lcdBacklightBleed; p.lcdResponseSmear=fx.lcdResponseSmear;
         }
 
         private static AnimationCurve CloneCurve(AnimationCurve curve)
