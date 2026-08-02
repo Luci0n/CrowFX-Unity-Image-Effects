@@ -28,13 +28,27 @@ Shader "Hidden/CrowFX/Stages/SamplingGrid"
             float _PixelSize;
             float _UseVirtualGrid;
             float4 _VirtualRes;
+            float4 _SamplingPhase;
+            float _PixelAspect, _SamplingFilter;
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
 
                 if (_PixelSize > 1.0 || _UseVirtualGrid > 0.5)
-                    uv = CrowFX_SnapToPixelBlocks(uv, _PixelSize, _UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
+                {
+                    float2 grid = CrowFX_GetBaseResolution(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
+                    grid.x /= max(_PixelAspect, 0.001);
+                    float block = max(_PixelSize, 1.0);
+                    float2 phase = clamp(_SamplingPhase.xy, -0.5, 0.5);
+                    uv = (floor(uv * grid / block + phase) - phase + 0.5) * (block / grid);
+                }
+
+                if (_SamplingFilter < 0.5)
+                {
+                    float2 sourceSize = _MainTex_TexelSize.zw;
+                    uv = (floor(uv * sourceSize) + 0.5) / sourceSize;
+                }
 
                 return tex2D(_MainTex, uv);
             }

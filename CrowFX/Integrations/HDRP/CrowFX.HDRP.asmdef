@@ -1,0 +1,11 @@
+{
+    "name": "CrowFX.HDRP",
+    "rootNamespace": "CrowFX.Integrations.HDRP",
+    "references": ["CrowFX", "Unity.RenderPipelines.HighDefinition.Runtime"],
+    "autoReferenced": true,
+    "defineConstraints": ["CROWFX_HDRP"],
+    "versionDefines": [
+        { "name": "com.unity.render-pipelines.high-definition", "expression": "14.0.0", "define": "CROWFX_HDRP" }
+    ],
+    "noEngineReferences": false
+}

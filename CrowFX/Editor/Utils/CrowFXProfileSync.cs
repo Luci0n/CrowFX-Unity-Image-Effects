@@ -111,7 +111,7 @@ namespace CrowFX.EditorTools
                 return;
 
             var scene = gameObject.scene;
-            if (scene.IsValid() && scene.isLoaded)
+            if (!EditorApplication.isPlayingOrWillChangePlaymode && scene.IsValid() && scene.isLoaded)
                 EditorSceneManager.MarkSceneDirty(scene);
         }
 

@@ -172,8 +172,12 @@ namespace CrowFX.EditorTools
         {
             var sections = new List<SectionDef>(propsBySection.Count);
 
-            // distinct keys
-            var keys = propsBySection.Keys.Distinct(StringComparer.Ordinal).ToList();
+            // Include metadata-only sections such as the Look Library. A section should
+            // not need a dummy serialized component field merely to exist in the UI.
+            var keys = propsBySection.Keys
+                .Union(meta.Keys, StringComparer.Ordinal)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
 
             foreach (var key in keys)
             {

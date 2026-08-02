@@ -24,6 +24,8 @@ namespace CrowFX.EditorTools
         private readonly Dictionary<AnimBool, string> _prefKeyByFold = new();
         private readonly HashSet<string> _drawnThisSection = new(StringComparer.Ordinal);
         private readonly List<CrowFxSectionsModel.SectionDef> _sections = new();
+        private static readonly List<CrowFXPresetAsset> DataDrivenPresets = new();
+        private static double _nextPresetAssetRefresh;
         private readonly struct EnabledScope : IDisposable
         {
             private readonly bool _previousState;
@@ -67,6 +69,185 @@ namespace CrowFX.EditorTools
             RadialStrength
         }
 
+        private enum CrtPreset { ConsumerTv, Arcade, Pvm, PcMonitor }
+        private enum VhsPreset { CleanSp, Consumer, RentalCopy, DamagedEp }
+        private enum JitterPreset { SubtleRgb, VhsDrift, DigitalShake, GlitchHash }
+        private enum BleedPreset { SoftLens, VhsChroma, RadialFringe, NeonSmear }
+        private enum GhostPreset { Persistence, LcdSmear, DreamTrail, SecurityCam }
+        private enum UnsharpPreset { SoftDetail, CrispPixel, LumaClean, Aggressive }
+        private enum LensPreset { CleanOptics, CinemaGlass, CamcorderSensor, DreamBloom }
+        private enum FilmPreset { Fine35, Warm16, Documentary, DamagedStock }
+        private enum MotionPreset { SubtleMotion, Datamosh, FrozenBlocks, SignalTear }
+        private enum DigitalPreset { CleanStream, WebVideo, LowBitrate, BrokenCodec }
+        private enum CompositePreset { CleanDecode, Broadcast, ConsumerCable, UnstableRf }
+        private enum LcdPreset { ModernPanel, RetroHandheld, SlowTn, DamagedPanel }
+        private enum FullStackPreset
+        {
+            CleanRetro,
+            CleanDigital,
+            SoftCinematic,
+            SharpGameplay,
+            MutedDocumentary,
+            RetroConsole,
+            RetroHandheld,
+            PixelDither,
+            PocketRpg,
+            MonochromeHandheld,
+            SoftConsumerCrt,
+            ArcadeCabinet,
+            BroadcastPvm,
+            GreenTerminal,
+            AmberTerminal,
+            CleanVhs,
+            RentalVhs,
+            Camcorder90s,
+            HomeMovie,
+            DamagedTape,
+            GraphicNovel,
+            PosterizedNoir,
+            NewspaperHalftone,
+            MangaInk,
+            TwoToneComic,
+            DigitalGlitch,
+            LowFiLcd,
+            SignalDesync,
+            BrokenLcd,
+            CompressionPop,
+            ChromaticDream,
+            NeonTrails,
+            PastelMemory,
+            MusicVideoGlow,
+            FrozenEcho,
+            SecurityMonitor,
+            BroadcastNews,
+            CableAccess,
+            NightVision,
+            ThermalScope,
+            AnalogHorror,
+            FoundFootage,
+            HauntedMonitor,
+            EmergencySignal,
+            CorruptedMemory,
+            PsychedelicFringe,
+            BleachBypass,
+            ColorPop,
+            BlueMood,
+            WarmNostalgia,
+
+            // Appended to preserve the serialized/EditorPrefs values of the original fifty looks.
+            NeutralEditorial, ProductShowcase, SoftPortrait,
+            DosVga, EinkReader, MicroconsoleLcd,
+            ApertureGrilleHd, VectorDisplay, MonochromeLabScope,
+            SvhsMaster, EpLongPlay, PublicAccessDub,
+            RisographDuotone, PulpColor, BlueprintLines,
+            PacketLoss, DataBend, BufferCollapse,
+            PrismMemory, InfraredDream, AuroraFeedback,
+            BodycamEvidence, DroneTelemetry, ArchiveNewsreel,
+            SodiumBasement, EvpRecorder, BiohazardFeed,
+            CrossProcess, SolarizedChrome, AnaglyphPulse,
+            LumaInspection, EdgeSurvey, ChromaAlignment, MotionPersistence,
+            CompressionStress, LowLightRecovery, PseudocolorMap, ThresholdSegmentation
+        }
+
+        private readonly struct FullStackPresetEntry
+        {
+            public readonly string Label;
+            public readonly FullStackPreset Preset;
+
+            public FullStackPresetEntry(string label, FullStackPreset preset)
+            {
+                Label = label;
+                Preset = preset;
+            }
+        }
+
+        private sealed class FullStackPresetCategory
+        {
+            public readonly string ShortLabel;
+            public readonly string Title;
+            public readonly string Hint;
+            public readonly Color Tint;
+            public readonly FullStackPresetEntry[] Entries;
+
+            public FullStackPresetCategory(string shortLabel, string title, string hint, Color tint, params FullStackPresetEntry[] entries)
+            {
+                ShortLabel = shortLabel;
+                Title = title;
+                Hint = hint;
+                Tint = tint;
+                Entries = entries;
+            }
+        }
+
+        private static readonly FullStackPresetCategory[] FullStackPresetCategories =
+        {
+            new("CLEAN", "CLEAN & PRODUCTION", "Finishing, clarity, and restrained grading.", new Color(0.32f, 0.68f, 0.58f, 0.24f),
+                new("Clean Retro", FullStackPreset.CleanRetro), new("Clean Digital", FullStackPreset.CleanDigital),
+                new("Soft Cinematic", FullStackPreset.SoftCinematic), new("Sharp Gameplay", FullStackPreset.SharpGameplay),
+                new("Muted Documentary", FullStackPreset.MutedDocumentary), new("Neutral Editorial", FullStackPreset.NeutralEditorial),
+                new("Product Showcase", FullStackPreset.ProductShowcase), new("Soft Portrait", FullStackPreset.SoftPortrait)),
+            new("PIXEL", "PIXEL & HANDHELD", "Fixed grids, limited levels, and display persistence.", new Color(0.38f, 0.58f, 0.88f, 0.24f),
+                new("16-bit Console", FullStackPreset.RetroConsole), new("Retro Handheld", FullStackPreset.RetroHandheld),
+                new("Pixel Dither", FullStackPreset.PixelDither), new("Pocket RPG", FullStackPreset.PocketRpg),
+                new("Mono Handheld", FullStackPreset.MonochromeHandheld), new("DOS VGA", FullStackPreset.DosVga),
+                new("E-Ink Reader", FullStackPreset.EinkReader), new("Microconsole LCD", FullStackPreset.MicroconsoleLcd)),
+            new("CRT", "CRT DISPLAYS", "Consumer tubes, arcade masks, PVMs, and terminals.", new Color(0.45f, 0.68f, 0.92f, 0.24f),
+                new("Soft Consumer CRT", FullStackPreset.SoftConsumerCrt), new("Arcade Cabinet", FullStackPreset.ArcadeCabinet),
+                new("Broadcast PVM", FullStackPreset.BroadcastPvm), new("Green Terminal", FullStackPreset.GreenTerminal),
+                new("Amber Terminal", FullStackPreset.AmberTerminal), new("Aperture Grille HD", FullStackPreset.ApertureGrilleHd),
+                new("Vector Display", FullStackPreset.VectorDisplay), new("Laboratory Scope", FullStackPreset.MonochromeLabScope)),
+            new("VHS", "VHS & TAPE", "Clean recordings through severe tape damage.", new Color(0.78f, 0.52f, 0.30f, 0.24f),
+                new("Clean VHS", FullStackPreset.CleanVhs), new("Rental VHS", FullStackPreset.RentalVhs),
+                new("90s Camcorder", FullStackPreset.Camcorder90s), new("Home Movie", FullStackPreset.HomeMovie),
+                new("Damaged Tape", FullStackPreset.DamagedTape), new("S-VHS Master", FullStackPreset.SvhsMaster),
+                new("EP Long Play", FullStackPreset.EpLongPlay), new("Public Access Dub", FullStackPreset.PublicAccessDub)),
+            new("PRINT", "PRINT & ILLUSTRATION", "Color comics, newsprint, noir, and screentone.", new Color(0.72f, 0.64f, 0.42f, 0.24f),
+                new("Graphic Novel", FullStackPreset.GraphicNovel), new("Posterized Noir", FullStackPreset.PosterizedNoir),
+                new("Color Newsprint", FullStackPreset.NewspaperHalftone), new("Manga Ink", FullStackPreset.MangaInk),
+                new("Color Comic", FullStackPreset.TwoToneComic), new("Risograph Duotone", FullStackPreset.RisographDuotone),
+                new("Pulp Color", FullStackPreset.PulpColor), new("Blueprint Lines", FullStackPreset.BlueprintLines)),
+            new("GLITCH", "DIGITAL & GLITCH", "Desync, LCD response, quantization, and corruption.", new Color(0.70f, 0.38f, 0.78f, 0.24f),
+                new("Digital Glitch", FullStackPreset.DigitalGlitch), new("Low-fi LCD", FullStackPreset.LowFiLcd),
+                new("Signal Desync", FullStackPreset.SignalDesync), new("Broken LCD", FullStackPreset.BrokenLcd),
+                new("Compression Pop", FullStackPreset.CompressionPop), new("Packet Loss", FullStackPreset.PacketLoss),
+                new("Data Bend", FullStackPreset.DataBend), new("Buffer Collapse", FullStackPreset.BufferCollapse)),
+            new("DREAM", "DREAM & MUSIC VIDEO", "Rotoscope, fisheye, monochrome stagecraft, neon, datamosh, and surreal pop.", new Color(0.86f, 0.40f, 0.66f, 0.24f),
+                new("Rotoscope Sketch", FullStackPreset.ChromaticDream), new("Neon Night Drive", FullStackPreset.NeonTrails),
+                new("Color-Block Pop", FullStackPreset.PastelMemory), new("Fisheye Couture", FullStackPreset.MusicVideoGlow),
+                new("Datamosh Cut", FullStackPreset.FrozenEcho), new("Stop-Motion Pop", FullStackPreset.PrismMemory),
+                new("Monochrome Stage", FullStackPreset.InfraredDream), new("Mythic VFX", FullStackPreset.AuroraFeedback)),
+            new("WATCH", "SURVEILLANCE & BROADCAST", "Monitoring, news, cable, night, and inverted scopes.", new Color(0.38f, 0.72f, 0.48f, 0.24f),
+                new("Security Monitor", FullStackPreset.SecurityMonitor), new("Broadcast News", FullStackPreset.BroadcastNews),
+                new("Cable Access", FullStackPreset.CableAccess), new("Night Vision", FullStackPreset.NightVision),
+                new("Inverted Scope", FullStackPreset.ThermalScope), new("Bodycam Evidence", FullStackPreset.BodycamEvidence),
+                new("Drone Telemetry", FullStackPreset.DroneTelemetry), new("Archive Newsreel", FullStackPreset.ArchiveNewsreel)),
+            new("HORROR", "HORROR & DISTRESS", "Analog, spectral, emergency, and digital damage.", new Color(0.78f, 0.30f, 0.32f, 0.24f),
+                new("Analog Horror", FullStackPreset.AnalogHorror), new("Found Footage", FullStackPreset.FoundFootage),
+                new("Haunted Monitor", FullStackPreset.HauntedMonitor), new("Emergency Signal", FullStackPreset.EmergencySignal),
+                new("Corrupted Memory", FullStackPreset.CorruptedMemory), new("Sodium Basement", FullStackPreset.SodiumBasement),
+                new("EVP Recorder", FullStackPreset.EvpRecorder), new("Biohazard Feed", FullStackPreset.BiohazardFeed)),
+            new("COLOR", "COLOR & EXPERIMENTAL", "Creative separation and photochemical-inspired grades.", new Color(0.38f, 0.72f, 0.82f, 0.24f),
+                new("Psychedelic Fringe", FullStackPreset.PsychedelicFringe), new("Bleach Bypass", FullStackPreset.BleachBypass),
+                new("Color Pop", FullStackPreset.ColorPop), new("Blue Mood", FullStackPreset.BlueMood),
+                new("Warm Nostalgia", FullStackPreset.WarmNostalgia), new("Cross Process", FullStackPreset.CrossProcess),
+                new("Solarized Chrome", FullStackPreset.SolarizedChrome), new("Anaglyph Pulse", FullStackPreset.AnaglyphPulse)),
+            new("RESEARCH", "RESEARCH & ANALYSIS", "Inspection, visualization, stress testing, and accessibility studies.", new Color(0.30f, 0.72f, 0.68f, 0.24f),
+                new("Luma Inspection", FullStackPreset.LumaInspection), new("Edge Survey", FullStackPreset.EdgeSurvey),
+                new("Chroma Alignment", FullStackPreset.ChromaAlignment), new("Motion Persistence", FullStackPreset.MotionPersistence),
+                new("Compression Stress", FullStackPreset.CompressionStress), new("Low-light Recovery", FullStackPreset.LowLightRecovery),
+                new("Pseudocolor Map", FullStackPreset.PseudocolorMap), new("Threshold Segmentation", FullStackPreset.ThresholdSegmentation))
+        };
+
+        private static int FullStackPresetCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < FullStackPresetCategories.Length; i++) count += FullStackPresetCategories[i].Entries.Length;
+                return count;
+            }
+        }
+
         // Custom UI extras
         private AnimBool _foldResolutionPresets;
 
@@ -81,12 +262,32 @@ namespace CrowFX.EditorTools
         private AnimBool _foldBleedWobble;
         private AnimBool _foldJitterAdvanced;
         private AnimBool _foldJitterHashNoise;
+        private AnimBool _foldCrtGeometry, _foldCrtBeam, _foldCrtPhosphor, _foldCrtFinish;
+        private AnimBool _foldVhsTransport, _foldVhsTracking, _foldVhsSignal, _foldVhsDamage;
+        private AnimBool _foldLensOptics, _foldLensHighlight, _foldLensSensor;
+        private AnimBool _foldFilmGrain, _foldFilmHalation, _foldFilmDamage;
+        private AnimBool _foldMotionBlocks, _foldMotionHistory;
+        private AnimBool _foldDigitalCodec, _foldDigitalArtifacts;
+        private AnimBool _foldCompositeEncode, _foldCompositeDecode;
+        private AnimBool _foldLcdMatrix, _foldLcdPanel;
 
         private readonly List<AnimBool> _allFolds = new();
 
         // Search
         private const string Pref_Search = "CrowImageEffectsEditor.Search";
+        private const string Pref_FullPresetSearch = "CrowImageEffectsEditor.FullPresets.Search";
+        private const string Pref_FullPresetCategory = "CrowImageEffectsEditor.FullPresets.Category";
+        private const string Pref_FullPresetSelection = "CrowImageEffectsEditor.FullPresets.Selection";
+        private const string Pref_FullPresetAmount = "CrowImageEffectsEditor.FullPresets.Amount";
+        private const string Pref_FullPresetFavorites = "CrowImageEffectsEditor.FullPresets.Favorites";
+        private const string Pref_FullPresetFavoritesOnly = "CrowImageEffectsEditor.FullPresets.FavoritesOnly";
         private string _search = "";
+        private string _fullPresetSearch = "";
+        private int _fullPresetCategory;
+        private FullStackPreset _selectedFullStackPreset = FullStackPreset.SoftCinematic;
+        private float _fullPresetAmount = 0.85f;
+        private bool _fullPresetFavoritesOnly;
+        private readonly HashSet<FullStackPreset> _favoriteFullStackPresets = new();
 
         private static string _rootFromThisScript;
 
@@ -172,20 +373,32 @@ namespace CrowFX.EditorTools
         private float _bleedPreviewDragStartProjection;
         private Vector2 _bleedPreviewDragDirection;
         private bool _suspendAutoProfileSync;
+        private bool _fullPresetPreviewActive;
+        private string _fullPresetPreviewSnapshot;
+        private int _fullPresetPreviewTargetId;
+        private FullStackPreset _previewedFullStackPreset;
 
         private static readonly string[] _previewActionSections =
         {
             SectionKeys.Sampling,
             SectionKeys.Pregrade,
+            SectionKeys.LensSensor,
+            SectionKeys.Film,
             SectionKeys.Palette,
             SectionKeys.TextureMask,
             SectionKeys.DepthMask,
             SectionKeys.Jitter,
             SectionKeys.Bleed,
             SectionKeys.Ghost,
+            SectionKeys.MotionGlitch,
             SectionKeys.Edges,
             SectionKeys.Unsharp,
-            SectionKeys.Dither
+            SectionKeys.Dither,
+            SectionKeys.DigitalVideo,
+            SectionKeys.Vhs,
+            SectionKeys.Composite,
+            SectionKeys.Crt,
+            SectionKeys.Lcd
         };
 
         // =============================================================================================
@@ -194,6 +407,14 @@ namespace CrowFX.EditorTools
         private void OnEnable()
         {
             _search = EditorPrefs.GetString(Pref_Search, "");
+            _fullPresetSearch = EditorPrefs.GetString(Pref_FullPresetSearch, "");
+            _fullPresetCategory = Mathf.Clamp(EditorPrefs.GetInt(Pref_FullPresetCategory, 0), 0, FullStackPresetCategories.Length - 1);
+            _selectedFullStackPreset = (FullStackPreset)Mathf.Clamp(
+                EditorPrefs.GetInt(Pref_FullPresetSelection, (int)FullStackPreset.SoftCinematic),
+                0, Enum.GetValues(typeof(FullStackPreset)).Length - 1);
+            _fullPresetAmount = Mathf.Clamp(EditorPrefs.GetFloat(Pref_FullPresetAmount, 0.85f), 0.25f, 1f);
+            _fullPresetFavoritesOnly = EditorPrefs.GetBool(Pref_FullPresetFavoritesOnly, false);
+            LoadFullPresetFavorites();
             LoadFavorites();
             InitExtraFoldouts();
             RebuildAll();
@@ -201,6 +422,7 @@ namespace CrowFX.EditorTools
 
         private void OnDisable()
         {
+            CrowFxEditorUI.CloseActivePopup();
             RestorePreviewStatesIfNeeded();
             RestorePreviewBypassIfNeeded();
             UnregisterAllFoldListeners();
@@ -242,6 +464,28 @@ namespace CrowFX.EditorTools
             _foldBleedWobble      = NewFold("Bleed.Wobble",      defaultExpanded: false);
             _foldJitterAdvanced   = NewFold("Jitter.Advanced",   defaultExpanded: false);
             _foldJitterHashNoise = NewFold("Jitter.HashNoise", defaultExpanded: false);
+            _foldCrtGeometry = NewFold("CRT.Geometry", defaultExpanded: true);
+            _foldCrtBeam = NewFold("CRT.Beam", defaultExpanded: true);
+            _foldCrtPhosphor = NewFold("CRT.Phosphor", defaultExpanded: true);
+            _foldCrtFinish = NewFold("CRT.Finish", defaultExpanded: false);
+            _foldVhsTransport = NewFold("VHS.Transport", defaultExpanded: true);
+            _foldVhsTracking = NewFold("VHS.Tracking", defaultExpanded: true);
+            _foldVhsSignal = NewFold("VHS.Signal", defaultExpanded: true);
+            _foldVhsDamage = NewFold("VHS.Damage", defaultExpanded: false);
+            _foldLensOptics = NewFold("Lens.Optics", defaultExpanded: true);
+            _foldLensHighlight = NewFold("Lens.Highlight", defaultExpanded: true);
+            _foldLensSensor = NewFold("Lens.Sensor", defaultExpanded: false);
+            _foldFilmGrain = NewFold("Film.Grain", defaultExpanded: true);
+            _foldFilmHalation = NewFold("Film.Halation", defaultExpanded: true);
+            _foldFilmDamage = NewFold("Film.Damage", defaultExpanded: false);
+            _foldMotionBlocks = NewFold("Motion.Blocks", defaultExpanded: true);
+            _foldMotionHistory = NewFold("Motion.History", defaultExpanded: false);
+            _foldDigitalCodec = NewFold("Digital.Codec", defaultExpanded: true);
+            _foldDigitalArtifacts = NewFold("Digital.Artifacts", defaultExpanded: true);
+            _foldCompositeEncode = NewFold("Composite.Encode", defaultExpanded: true);
+            _foldCompositeDecode = NewFold("Composite.Decode", defaultExpanded: true);
+            _foldLcdMatrix = NewFold("LCD.Matrix", defaultExpanded: true);
+            _foldLcdPanel = NewFold("LCD.Panel", defaultExpanded: true);
         }
 
         // =============================================================================================
@@ -447,21 +691,31 @@ namespace CrowFX.EditorTools
 
         private List<string> GetActiveStageLabels(CrowImageEffects fx)
         {
-            var stages = new List<string>(12);
+            var stages = new List<string>(22);
             if (fx == null) return stages;
 
             if (fx.pixelSize > 1 || fx.useVirtualGrid) stages.Add("Sampling");
-            stages.Add("Posterize");
+            bool posterizeActive = fx.animateLevels ||
+                (fx.usePerChannel ? fx.levelsR < 512 || fx.levelsG < 512 || fx.levelsB < 512 : fx.levels < 512);
+            if (posterizeActive) stages.Add("Posterize");
             if (fx.pregradeEnabled) stages.Add("Pregrade");
+            if (fx.lensSensorEnabled && fx.lensSensorIntensity > 0.0001f) stages.Add("Lens");
+            if (fx.filmEnabled && fx.filmIntensity > 0.0001f) stages.Add("Film");
             if (fx.usePalette && fx.paletteTex != null) stages.Add("Palette");
             if (fx.useMask && fx.maskTex != null) stages.Add("Texture Mask");
             if (fx.useDepthMask) stages.Add("Depth Mask");
             if (fx.jitterEnabled && fx.jitterStrength > 0f) stages.Add("Jitter");
             if (fx.bleedBlend > 0f && fx.bleedIntensity > 0f) stages.Add("RGB Bleed");
             if (fx.ghostEnabled && fx.ghostBlend > 0f) stages.Add("Ghost");
+            if (fx.motionGlitchEnabled && fx.motionGlitchIntensity > 0.0001f) stages.Add("Motion");
             if (fx.edgeEnabled && fx.edgeBlend > 0f) stages.Add("Edges");
             if (fx.unsharpEnabled && fx.unsharpAmount > 0f) stages.Add("Unsharp");
             if (fx.ditherMode != CrowImageEffects.DitherMode.None && fx.ditherStrength > 0f) stages.Add("Dither");
+            if (fx.digitalVideoEnabled && fx.digitalVideoIntensity > 0.0001f) stages.Add("Digital Video");
+            if (fx.vhsEnabled && fx.vhsIntensity > 0.0001f) stages.Add("VHS");
+            if (fx.compositeEnabled && fx.compositeIntensity > 0.0001f) stages.Add("Composite");
+            if (fx.crtEnabled) stages.Add("CRT");
+            if (fx.lcdEnabled && fx.lcdIntensity > 0.0001f) stages.Add("LCD");
 
             return stages;
         }
@@ -502,6 +756,9 @@ namespace CrowFX.EditorTools
 
             if (_previewBypassActive)
                 statusPills.Add(new SummaryPill("Preview bypassed", new Color(0.28f, 0.2f, 0.16f, 0.65f), 120f));
+
+            if (_fullPresetPreviewActive)
+                statusPills.Add(new SummaryPill($"Look preview: {_previewedFullStackPreset}", new Color(0.22f, 0.30f, 0.42f, 0.72f), 172f));
 
             if (targetFx != null && targetFx.ghostEnabled && targetFx.ghostBlend > 0f)
             {
@@ -722,10 +979,13 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Theme.DrawBorder(headerRect);
                 }
 
+                bool isLibrarySection = sectionKey == SectionKeys.Presets;
                 Rect starRect   = new Rect(headerRect.x + 2f,    headerRect.y + 4f, 16f, 18f);
                 Rect resetRect  = new Rect(headerRect.xMax - 96f, headerRect.y + 4f, 92f, 18f);
                 Rect randomRect = new Rect(headerRect.xMax - 114f, headerRect.y + 4f, 16f, 18f);
                 Rect rightButtons = new Rect(randomRect.x, randomRect.y, resetRect.xMax - randomRect.x, randomRect.height);
+                if (isLibrarySection)
+                    rightButtons = new Rect(headerRect.xMax, headerRect.y + 4f, 0f, 18f);
 
                 Rect ignoreLeft  = new Rect(starRect.x,   starRect.y,   starRect.width,               starRect.height);
                 Rect ignoreRight = new Rect(randomRect.x, randomRect.y, resetRect.xMax - randomRect.x, randomRect.height);
@@ -734,11 +994,14 @@ namespace CrowFX.EditorTools
                 HandleHeaderClick(headerRect, fold, ignoreRect1: starRect, ignoreRect2: rightButtons);
 
                 DrawStarButton(starRect, sectionKey);
-                DrawSectionHeader(headerRect, title, icon, hint, fold.target, randomRect);
-                DrawSectionEnabledDot(headerRect, sectionKey);
-                DrawDiceButton(randomRect, sectionKey);
+                DrawSectionHeader(headerRect, title, icon, hint, fold.target, rightButtons);
+                if (!isLibrarySection)
+                {
+                    DrawSectionEnabledDot(headerRect, sectionKey);
+                    DrawDiceButton(randomRect, sectionKey);
+                }
 
-                if (HandleHeaderResetButton(resetRect, sectionKey))
+                if (!isLibrarySection && HandleHeaderResetButton(resetRect, sectionKey))
                     RebuildAll();
 
                 using (var fade = new EditorGUILayout.FadeGroupScope(fold.faded))
@@ -1123,6 +1386,8 @@ namespace CrowFX.EditorTools
             { SectionKeys.Palette,     "usePalette"      },
             { SectionKeys.Dither,      "ditherMode"      },
             { SectionKeys.Ghost,       "ghostEnabled"    },
+            { SectionKeys.Crt,         "crtEnabled"      },
+            { SectionKeys.Vhs,         "vhsEnabled"      },
             { SectionKeys.Sampling,    null              },
             { SectionKeys.Posterize,   null              },
             { SectionKeys.Shaders,     null              },
@@ -1178,17 +1443,28 @@ namespace CrowFX.EditorTools
             return sectionKey switch
             {
                 SectionKeys.Sampling    => GetInt("pixelSize") > 1 || GetBool("useVirtualGrid"),
-                SectionKeys.Posterize   => true,
+                SectionKeys.Posterize   => GetBool("animateLevels") ||
+                    (GetBool("usePerChannel")
+                        ? GetInt("levelsR") < 512 || GetInt("levelsG") < 512 || GetInt("levelsB") < 512
+                        : GetInt("levels") < 512),
                 SectionKeys.Pregrade    => GetBool("pregradeEnabled"),
+                SectionKeys.LensSensor  => GetBool("lensSensorEnabled") && GetFloat("lensSensorIntensity") > 0.0001f,
+                SectionKeys.Film        => GetBool("filmEnabled") && GetFloat("filmIntensity") > 0.0001f,
                 SectionKeys.Palette     => GetBool("usePalette") && GetObject("paletteTex") != null,
                 SectionKeys.TextureMask => GetBool("useMask") && GetObject("maskTex") != null,
                 SectionKeys.DepthMask   => GetBool("useDepthMask"),
                 SectionKeys.Jitter      => GetBool("jitterEnabled") && GetFloat("jitterStrength") > 0f,
                 SectionKeys.Bleed       => GetFloat("bleedBlend") > 0f && GetFloat("bleedIntensity") > 0f,
                 SectionKeys.Ghost       => GetBool("ghostEnabled") && GetFloat("ghostBlend") > 0f,
+                SectionKeys.MotionGlitch=> GetBool("motionGlitchEnabled") && GetFloat("motionGlitchIntensity") > 0.0001f,
                 SectionKeys.Edges       => GetBool("edgeEnabled") && GetFloat("edgeBlend") > 0f,
                 SectionKeys.Unsharp     => GetBool("unsharpEnabled") && GetFloat("unsharpAmount") > 0f,
                 SectionKeys.Dither      => GetEnum("ditherMode") != (int)CrowImageEffects.DitherMode.None && GetFloat("ditherStrength") > 0f,
+                SectionKeys.DigitalVideo=> GetBool("digitalVideoEnabled") && GetFloat("digitalVideoIntensity") > 0.0001f,
+                SectionKeys.Crt         => GetBool("crtEnabled"),
+                SectionKeys.Vhs         => GetBool("vhsEnabled") && GetFloat("vhsIntensity") > 0f,
+                SectionKeys.Composite   => GetBool("compositeEnabled") && GetFloat("compositeIntensity") > 0.0001f,
+                SectionKeys.Lcd         => GetBool("lcdEnabled") && GetFloat("lcdIntensity") > 0.0001f,
                 _                       => false
             };
         }
@@ -1217,6 +1493,8 @@ namespace CrowFX.EditorTools
         private bool SectionHasAnyMatch(string sectionKey)
         {
             if (string.IsNullOrWhiteSpace(_search)) return true;
+            if (sectionKey == SectionKeys.Presets)
+                return PassesSearch("look library preset presets browse preview apply favorite saved amount category");
             if (!_propsBySection.TryGetValue(sectionKey, out var list)) return false;
 
             for (int i = 0; i < list.Count; i++)
@@ -1267,7 +1545,7 @@ namespace CrowFX.EditorTools
 
                 if (!PropMatchesSearch(p)) continue;
 
-                EditorGUILayout.PropertyField(p, PropLabel(p), includeChildren: true);
+                DrawPropertyField(p, includeChildren: true);
             }
         }
 
@@ -1294,6 +1572,15 @@ namespace CrowFX.EditorTools
         {
             if (prop == null || !PropMatchesSearch(prop))
                 return;
+
+            if (prop.propertyType == SerializedPropertyType.Enum)
+            {
+                string popupKey = $"property:{target.GetInstanceID()}:{prop.propertyPath}";
+                int next = CrowFxEditorUI.ThemedPopup(popupKey, PropLabel(prop, labelText, tooltipOverride), prop.enumValueIndex, prop.enumDisplayNames);
+                if (next != prop.enumValueIndex)
+                    prop.enumValueIndex = next;
+                return;
+            }
 
             EditorGUILayout.PropertyField(prop, PropLabel(prop, labelText, tooltipOverride), includeChildren);
         }
@@ -1740,6 +2027,12 @@ namespace CrowFX.EditorTools
 
         private void RestorePreviewStatesIfNeeded()
         {
+            RestoreFullStackPresetPreviewIfNeeded();
+            RestoreSectionPreviewStatesIfNeeded();
+        }
+
+        private void RestoreSectionPreviewStatesIfNeeded()
+        {
             RestoreSoloPreviewIfNeeded();
 
             if (_previewMutedSections.Count == 0)
@@ -1833,6 +2126,12 @@ namespace CrowFX.EditorTools
                     CollectEnumPreviewOverride(overrides, "ditherMode", (int)CrowImageEffects.DitherMode.None);
                     CollectFloatPreviewOverride(overrides, "ditherStrength", 0f);
                     break;
+                case SectionKeys.Crt:
+                    CollectBoolPreviewOverride(overrides, "crtEnabled", false);
+                    break;
+                case SectionKeys.Vhs:
+                    CollectBoolPreviewOverride(overrides, "vhsEnabled", false);
+                    break;
             }
 
             return overrides;
@@ -1876,7 +2175,7 @@ namespace CrowFX.EditorTools
                 case SectionKeys.Ghost:
                     CollectBoolPreviewOverride(overrides, "ghostEnabled", true);
                     if (GetFloat("ghostBlend") <= 0f)
-                        CollectFloatPreviewOverride(overrides, "ghostBlend", 0.35f);
+                        CollectFloatPreviewOverride(overrides, "ghostBlend", 0.18f);
                     break;
                 case SectionKeys.Edges:
                     CollectBoolPreviewOverride(overrides, "edgeEnabled", true);
@@ -1893,6 +2192,14 @@ namespace CrowFX.EditorTools
                         CollectEnumPreviewOverride(overrides, "ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4);
                     if (GetFloat("ditherStrength") <= 0f)
                         CollectFloatPreviewOverride(overrides, "ditherStrength", 0.45f);
+                    break;
+                case SectionKeys.Crt:
+                    CollectBoolPreviewOverride(overrides, "crtEnabled", true);
+                    break;
+                case SectionKeys.Vhs:
+                    CollectBoolPreviewOverride(overrides, "vhsEnabled", true);
+                    if (GetFloat("vhsIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "vhsIntensity", 0.8f);
                     break;
             }
 
@@ -2154,6 +2461,7 @@ namespace CrowFX.EditorTools
             return sectionKey switch
             {
                 SectionKeys.Master      => DrawMasterContent,
+                SectionKeys.Presets     => DrawPresetsContent,
                 SectionKeys.Pregrade    => DrawPregradeContent,
                 SectionKeys.Sampling    => DrawSamplingContent,
                 SectionKeys.Posterize   => DrawPosterizeContent,
@@ -2166,6 +2474,14 @@ namespace CrowFX.EditorTools
                 SectionKeys.Edges       => DrawEdgeContent,
                 SectionKeys.Unsharp     => DrawUnsharpContent,
                 SectionKeys.Dither      => DrawDitherContent,
+                SectionKeys.Crt         => DrawCrtContent,
+                SectionKeys.Vhs         => DrawVhsContent,
+                SectionKeys.LensSensor  => DrawLensSensorContent,
+                SectionKeys.Film        => DrawFilmContent,
+                SectionKeys.MotionGlitch=> DrawMotionGlitchContent,
+                SectionKeys.DigitalVideo=> DrawDigitalVideoContent,
+                SectionKeys.Composite   => DrawCompositeContent,
+                SectionKeys.Lcd         => DrawLcdContent,
                 SectionKeys.Shaders     => DrawShadersContent,
                 _             => null
             };
@@ -2182,6 +2498,15 @@ namespace CrowFX.EditorTools
                 DrawPropertyField(masterBlend, "Master Blend");
 
             DrawProfileControls(profile, autoApplyProfile);
+
+            var inspectedFx = (CrowImageEffects)target;
+            var inspectedCamera = inspectedFx != null ? inspectedFx.GetComponent<Camera>() : null;
+            int estimateWidth = inspectedCamera != null && inspectedCamera.pixelWidth > 0 ? inspectedCamera.pixelWidth : 1920;
+            int estimateHeight = inspectedCamera != null && inspectedCamera.pixelHeight > 0 ? inspectedCamera.pixelHeight : 1080;
+            long historyBytes = inspectedFx != null ? inspectedFx.GetEstimatedHistoryBytes(estimateWidth, estimateHeight) : 0L;
+            float historyMb = historyBytes / (1024f * 1024f);
+            if (inspectedFx != null && (string.IsNullOrWhiteSpace(_search) || PassesSearch("performance gpu passes samples memory vram")))
+                CrowFxEditorUI.Hint($"ACTIVE GRAPH  {inspectedFx.GetActivePassCount()} passes  |  ~{inspectedFx.GetEstimatedSamplesPerPixel()} texture reads/pixel  |  history {historyMb:0.0} MB at {estimateWidth}x{estimateHeight}");
 
             // FIX: always claim it (whether drawn or not) so auto-draw can't duplicate it.
             MarkDrawnMany("masterBlend", "profile", "autoApplyProfile");
@@ -2424,6 +2749,8 @@ namespace CrowFX.EditorTools
             var contrast = SP("contrast");
             var gamma = SP("gamma");
             var saturation = SP("saturation");
+            var pregradeTint = SP("pregradeTint");
+            var pregradeTintStrength = SP("pregradeTintStrength");
 
             if (PropMatchesSearch(pregradeEnabled))
                 DrawPropertyField(pregradeEnabled, "Enable Pregrade");
@@ -2435,16 +2762,18 @@ namespace CrowFX.EditorTools
                 DrawPropertyField(contrast, "Contrast");
                 DrawPropertyField(gamma, "Gamma");
                 DrawPropertyField(saturation, "Saturation");
+                DrawPropertyField(pregradeTint, "Color Filter");
+                DrawPropertyField(pregradeTintStrength, "Filter Strength");
             }
 
-            MarkDrawnMany("pregradeEnabled", "exposure", "contrast", "gamma", "saturation");
+            MarkDrawnMany("pregradeEnabled", "exposure", "contrast", "gamma", "saturation", "pregradeTint", "pregradeTintStrength");
 
             if (!enabled)
             {
-                if (string.IsNullOrWhiteSpace(_search) || PassesSearch("pregrade quantization exposure contrast gamma saturation"))
+                if (string.IsNullOrWhiteSpace(_search) || PassesSearch("pregrade quantization exposure contrast gamma saturation tint filter color"))
                     CrowFxEditorUI.Hint("Enable Pregrade to adjust the image before quantization.");
             }
-            else if (string.IsNullOrWhiteSpace(_search) || PassesSearch("pregrade quantization exposure contrast gamma saturation"))
+            else if (string.IsNullOrWhiteSpace(_search) || PassesSearch("pregrade quantization exposure contrast gamma saturation tint filter color"))
             {
                 GUILayout.Space(6);
                 CrowFxEditorUI.Hint("Applied before quantization.");
@@ -2774,6 +3103,8 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(pEnabled))
                 DrawPropertyField(pEnabled, "Enable Jitter");
 
+            DrawJitterPresetButtons();
+
             bool enabled = pEnabled != null && pEnabled.boolValue;
 
             if (enabled)
@@ -2993,6 +3324,7 @@ namespace CrowFX.EditorTools
 
             DrawPropertyField(bleedBlend, "Bleed Mix");
             DrawPropertyField(bleedIntensity, "Shift Distance");
+            DrawBleedPresetButtons();
 
             bool active = bleedBlend != null && bleedBlend.floatValue > 0f &&
                         bleedIntensity != null && bleedIntensity.floatValue > 0f;
@@ -3886,12 +4218,16 @@ namespace CrowFX.EditorTools
             var ghostCombineMode = SP("ghostCombineMode");
             var ghostOffsetPx = SP("ghostOffsetPx");
             var ghostFrames = SP("ghostFrames");
-            var ghostCaptureInterval = SP("ghostCaptureInterval");
             var ghostStartDelay = SP("ghostStartDelay");
             var ghostWeightCurve = SP("ghostWeightCurve");
+            var ghostResolutionScale = SP("ghostResolutionScale");
+            var ghostFrameIntervalMs = SP("ghostFrameIntervalMs");
+            var ghostDecayMs = SP("ghostDecayMs");
 
             if (PropMatchesSearch(ghostEnabled))
                 DrawPropertyField(ghostEnabled, "Enable Ghosting");
+
+            DrawGhostPresetButtons();
 
             bool enabled = ghostEnabled != null && ghostEnabled.boolValue;
             if (enabled)
@@ -3901,15 +4237,21 @@ namespace CrowFX.EditorTools
                 DrawPropertyField(ghostOffsetPx, "Trail Offset (px)");
                 GUILayout.Space(6);
                 DrawPropertyField(ghostFrames, "Stored Frames");
-                DrawPropertyField(ghostCaptureInterval, "Capture Interval");
                 DrawPropertyField(ghostStartDelay, "Start Delay");
                 DrawPropertyField(ghostWeightCurve, "Weight Curve");
+                using (CrowFxEditorUI.PanelScope())
+                {
+                    EditorGUILayout.LabelField("TEMPORAL QUALITY", CrowFxEditorUI.Styles.SubHeaderLabel);
+                    DrawPropertyField(ghostResolutionScale, "History Resolution");
+                    DrawPropertyField(ghostFrameIntervalMs, "Sample Interval (ms)");
+                    DrawPropertyField(ghostDecayMs, "Decay Time (ms)");
+                }
 
                 DrawGhostMiniPreview(
                     frames: ghostFrames != null ? ghostFrames.intValue : 4,
                     weightCurve: ghostWeightCurve != null ? ghostWeightCurve.floatValue : 1.5f,
                     offsetPx: ghostOffsetPx != null ? ghostOffsetPx.vector2Value : Vector2.zero,
-                    captureInterval: ghostCaptureInterval != null ? ghostCaptureInterval.intValue : 0,
+                    captureInterval: ghostFrameIntervalMs != null ? Mathf.Max(0, Mathf.RoundToInt(ghostFrameIntervalMs.floatValue / 16.667f) - 1) : 0,
                     startDelay: ghostStartDelay != null ? ghostStartDelay.intValue : 0,
                     ghostBlend: ghostBlend != null ? ghostBlend.floatValue : 0.35f,
                     combineMode: ghostCombineMode != null
@@ -3920,7 +4262,8 @@ namespace CrowFX.EditorTools
             MarkDrawnMany(
                 "ghostEnabled",
                 "ghostBlend", "ghostCombineMode", "ghostOffsetPx",
-                "ghostFrames", "ghostCaptureInterval", "ghostStartDelay", "ghostWeightCurve"
+                "ghostFrames", "ghostCaptureInterval", "ghostStartDelay", "ghostWeightCurve",
+                "ghostResolutionScale", "ghostFrameIntervalMs", "ghostDecayMs"
             );
 
             if (!enabled)
@@ -4003,13 +4346,17 @@ namespace CrowFX.EditorTools
             var unsharpThreshold = SP("unsharpThreshold");
             var unsharpLumaOnly = SP("unsharpLumaOnly");
             var unsharpChroma = SP("unsharpChroma");
+            var sharpenMode = SP("sharpenMode");
 
             if (PropMatchesSearch(unsharpEnabled))
                 DrawPropertyField(unsharpEnabled, "Enable Unsharp Mask");
 
+            DrawUnsharpPresetButtons();
+
             bool enabled = unsharpEnabled != null && unsharpEnabled.boolValue;
             if (enabled)
             {
+                DrawPropertyField(sharpenMode, "Algorithm");
                 DrawPropertyField(unsharpAmount, "Sharpen Amount");
                 DrawPropertyField(unsharpRadius, "Blur Radius");
                 DrawPropertyField(unsharpThreshold, "Noise Threshold");
@@ -4024,7 +4371,7 @@ namespace CrowFX.EditorTools
                 }
             }
 
-            MarkDrawnMany("unsharpEnabled", "unsharpAmount", "unsharpRadius", "unsharpThreshold", "unsharpLumaOnly", "unsharpChroma");
+            MarkDrawnMany("unsharpEnabled", "unsharpAmount", "unsharpRadius", "unsharpThreshold", "unsharpLumaOnly", "unsharpChroma", "sharpenMode");
 
             if (!enabled)
             {
@@ -4047,6 +4394,10 @@ namespace CrowFX.EditorTools
             var ditherStrength = SP("ditherStrength");
             var ditherAngle = SP("ditherAngle");
             var blueNoise = SP("blueNoise");
+            var temporalDither = SP("temporalDither");
+            var temporalDitherRate = SP("temporalDitherRate");
+            var halftoneScale = SP("halftoneScale");
+            var halftoneDotGain = SP("halftoneDotGain");
 
             if (PropMatchesSearch(ditherMode))
                 DrawPropertyField(ditherMode, "Pattern");
@@ -4066,6 +4417,9 @@ namespace CrowFX.EditorTools
                 if (needsBlueNoise)
                 {
                     DrawPropertyField(blueNoise, "Blue Noise Texture");
+                    DrawPropertyField(temporalDither, "Temporal Decorrelation");
+                    if (temporalDither != null && temporalDither.boolValue)
+                        DrawPropertyField(temporalDitherRate, "Update Rate");
 
                     bool showedDiagnostic = false;
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("blue noise texture 128x128 square"))
@@ -4098,6 +4452,12 @@ namespace CrowFX.EditorTools
                 }
                 else if (modeIndex == (int)CrowImageEffects.DitherMode.Halftone)
                 {
+                    using (CrowFxEditorUI.PanelScope())
+                    {
+                        EditorGUILayout.LabelField("PRINT SCREEN", CrowFxEditorUI.Styles.SubHeaderLabel);
+                        DrawPropertyField(halftoneScale, "Screen Cell Size");
+                        DrawPropertyField(halftoneDotGain, "Dot Gain");
+                    }
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("halftone dot matrix print"))
                         CrowFxEditorUI.Hint("Halftone creates a repeating dot matrix look with softer clustered breakup.");
                 }
@@ -4119,7 +4479,7 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint("Pattern is Off, so only posterization remains. Enable a dither pattern to reduce visible banding.");
             }
 
-            MarkDrawnMany("ditherMode", "ditherStrength", "ditherAngle", "blueNoise");
+            MarkDrawnMany("ditherMode", "ditherStrength", "ditherAngle", "blueNoise", "temporalDither", "temporalDitherRate", "halftoneScale", "halftoneDotGain");
 
             DrawAutoRemaining(SectionKeys.Dither);
         }
@@ -4135,6 +4495,2429 @@ namespace CrowFX.EditorTools
 
             // No manual properties here; just auto draw.
             DrawAutoRemaining(SectionKeys.Shaders);
+        }
+
+        private void DrawLensSensorContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("lensSensorEnabled");
+            DrawPropertyField(enabled, "Enable Lens & Sensor");
+            DrawLensPresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("lensSensorIntensity"), "Stage Mix");
+                CrowFxEditorUI.Hint("Acquisition-stage optics are evaluated before film, grading artifacts, and display simulation.");
+                DrawSubSection("Optical Geometry", "d_Camera Icon", _foldLensOptics, () =>
+                {
+                    DrawPropertyField(SP("lensDistortion"), "Lens Distortion");
+                    DrawPropertyField(SP("lensChromaticAberration"), "Lateral CA (px)");
+                    DrawPropertyField(SP("lensVignette"), "Optical Vignette");
+                }, "glass + image circle");
+                DrawSubSection("Highlight Response", "d_PreMatSphere", _foldLensHighlight, () =>
+                {
+                    DrawPropertyField(SP("lensBloom"), "Thresholded Bloom");
+                    DrawPropertyField(SP("lensBloomRadius"), "Bloom Radius");
+                }, "bright-source spread");
+                DrawSubSection("Sensor Readout", "d_PreTextureRGB", _foldLensSensor, () =>
+                {
+                    DrawPropertyField(SP("sensorRollingShutter"), "Rolling Shutter (px)");
+                    DrawPropertyField(SP("sensorNoise"), "Sensor Noise");
+                    DrawPropertyField(SP("sensorDeadPixels"), "Dead Pixel Rate");
+                }, "readout + defects");
+            }
+            else CrowFxEditorUI.Hint("Enable Lens & Sensor to shape acquisition before downstream media effects.");
+
+            MarkDrawnMany("lensSensorEnabled", "lensSensorIntensity", "lensDistortion", "lensChromaticAberration",
+                "lensVignette", "lensBloom", "lensBloomRadius", "sensorRollingShutter", "sensorNoise", "sensorDeadPixels");
+            DrawAutoRemaining(SectionKeys.LensSensor);
+        }
+
+        private void DrawFilmContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("filmEnabled");
+            DrawPropertyField(enabled, "Enable Film Emulation");
+            DrawFilmPresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("filmIntensity"), "Stock Mix");
+                CrowFxEditorUI.Hint("Film remains color-aware: grain follows density, while halation is highlight-gated and red-biased.");
+                DrawSubSection("Stock & Grain", "d_PreTextureMipMapHigh", _foldFilmGrain, () =>
+                {
+                    DrawPropertyField(SP("filmGrain"), "Grain Amount");
+                    DrawPropertyField(SP("filmGrainSize"), "Grain Size");
+                    DrawPropertyField(SP("filmFlicker"), "Exposure Flicker");
+                }, "density texture");
+                DrawSubSection("Halation", "d_PreMatSphere", _foldFilmHalation, () =>
+                {
+                    DrawPropertyField(SP("filmHalation"), "Red Halation");
+                    DrawPropertyField(SP("filmHalationRadius"), "Halation Radius");
+                }, "emulsion highlight spread");
+                DrawSubSection("Transport & Damage", "d_Animation.Play", _foldFilmDamage, () =>
+                {
+                    DrawPropertyField(SP("filmGateWeave"), "Gate Weave (px)");
+                    DrawPropertyField(SP("filmDust"), "Dust");
+                    DrawPropertyField(SP("filmScratches"), "Scratches");
+                }, "mechanical instability");
+            }
+            else CrowFxEditorUI.Hint("Enable Film Emulation for stock grain, halation, transport movement, and physical damage.");
+
+            MarkDrawnMany("filmEnabled", "filmIntensity", "filmGrain", "filmGrainSize", "filmHalation",
+                "filmHalationRadius", "filmGateWeave", "filmDust", "filmScratches", "filmFlicker");
+            DrawAutoRemaining(SectionKeys.Film);
+        }
+
+        private void DrawMotionGlitchContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("motionGlitchEnabled");
+            DrawPropertyField(enabled, "Enable Motion & Datamosh");
+            DrawMotionPresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("motionGlitchIntensity"), "Corruption Mix");
+                CrowFxEditorUI.Hint("Uses camera motion vectors and a previous-frame buffer; static imagery remains substantially cleaner than moving regions.");
+                DrawSubSection("Motion Blocks", "d_AnimationClip Icon", _foldMotionBlocks, () =>
+                {
+                    DrawPropertyField(SP("motionBlockSize"), "Macroblock Size");
+                    DrawPropertyField(SP("motionVectorDisplacement"), "Vector Displacement");
+                    DrawPropertyField(SP("motionFreezeRate"), "Block Freeze Rate");
+                    DrawPropertyField(SP("motionColorSplit"), "Motion Color Split");
+                }, "vector-driven corruption");
+                DrawSubSection("Temporal Buffer", "d_CameraPreview", _foldMotionHistory, () =>
+                {
+                    DrawPropertyField(SP("motionHistoryScale"), "History Resolution");
+                    DrawPropertyField(SP("motionHistoryFps"), "History Capture FPS");
+                    CrowFxEditorUI.Hint("Resolution controls block texture. Capture FPS controls persistence: 8-12 fps gives readable stop motion or datamosh holds; 24-60 fps stays responsive.");
+                }, "resolution + cadence");
+            }
+            else CrowFxEditorUI.Hint("Enable Motion & Datamosh for movement-dependent block displacement and held-frame corruption.");
+
+            MarkDrawnMany("motionGlitchEnabled", "motionGlitchIntensity", "motionBlockSize", "motionVectorDisplacement",
+                "motionFreezeRate", "motionColorSplit", "motionHistoryScale", "motionHistoryFps");
+            DrawAutoRemaining(SectionKeys.MotionGlitch);
+        }
+
+        private void DrawDigitalVideoContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("digitalVideoEnabled");
+            DrawPropertyField(enabled, "Enable Digital Video");
+            DrawDigitalPresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("digitalVideoIntensity"), "Codec Mix");
+                CrowFxEditorUI.Hint("Compression artifacts are applied before analog transport and display stages, matching a decoded digital source.");
+                DrawSubSection("Codec Structure", "d_GridLayoutGroup Icon", _foldDigitalCodec, () =>
+                {
+                    DrawPropertyField(SP("digitalBlockSize"), "Macroblock Size");
+                    DrawPropertyField(SP("digitalQuantization"), "Quantization Loss");
+                    DrawPropertyField(SP("digitalChromaSubsampling"), "Chroma Subsampling");
+                    DrawPropertyField(SP("digitalBitratePumping"), "Bitrate Pumping");
+                }, "blocks + bandwidth");
+                DrawSubSection("Edge Artifacts", "d_console.warnicon", _foldDigitalArtifacts, () =>
+                {
+                    DrawPropertyField(SP("digitalRinging"), "Transform Ringing");
+                    DrawPropertyField(SP("digitalMosquitoNoise"), "Mosquito Noise");
+                }, "ringing + crawl");
+            }
+            else CrowFxEditorUI.Hint("Enable Digital Video for codec-style blocks, chroma loss, ringing, and bitrate instability.");
+
+            MarkDrawnMany("digitalVideoEnabled", "digitalVideoIntensity", "digitalBlockSize", "digitalQuantization",
+                "digitalRinging", "digitalChromaSubsampling", "digitalMosquitoNoise", "digitalBitratePumping");
+            DrawAutoRemaining(SectionKeys.DigitalVideo);
+        }
+
+        private void DrawCompositeContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("compositeEnabled");
+            DrawPropertyField(enabled, "Enable Composite Signal");
+            DrawCompositePresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("compositeIntensity"), "Signal Mix");
+                CrowFxEditorUI.Hint("RGB is encoded into luma/chroma signal space, bandwidth-limited, phase-disturbed, then decoded back to RGB.");
+                DrawSubSection("Encoder & Channel", "d_PreTextureRGB", _foldCompositeEncode, () =>
+                {
+                    DrawPropertyField(SP("compositeStandard"), "Television Standard");
+                    DrawPropertyField(SP("compositeChromaBandwidth"), "Chroma Bandwidth");
+                    DrawPropertyField(SP("compositePhaseError"), "Subcarrier Phase Error");
+                }, "NTSC / PAL transport");
+                DrawSubSection("Decoder Artifacts", "d_PreTextureRGB", _foldCompositeDecode, () =>
+                {
+                    DrawPropertyField(SP("compositeDotCrawl"), "Dot Crawl");
+                    DrawPropertyField(SP("compositeRainbow"), "Rainbowing");
+                    DrawPropertyField(SP("compositeCombFilter"), "Comb Filter Quality");
+                }, "luma/chroma crosstalk");
+            }
+            else CrowFxEditorUI.Hint("Enable Composite Signal to simulate encoded television bandwidth and decoder crosstalk.");
+
+            MarkDrawnMany("compositeEnabled", "compositeIntensity", "compositeStandard", "compositeDotCrawl",
+                "compositeRainbow", "compositeChromaBandwidth", "compositePhaseError", "compositeCombFilter");
+            DrawAutoRemaining(SectionKeys.Composite);
+        }
+
+        private void DrawLcdContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("lcdEnabled");
+            DrawPropertyField(enabled, "Enable LCD Display");
+            DrawLcdPresetButtons();
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("lcdIntensity"), "Panel Mix");
+                CrowFxEditorUI.Hint("LCD is a presentation stage. Avoid enabling CRT simultaneously unless the intended look is a screen filmed from another display.");
+                DrawSubSection("Pixel Matrix", "d_GridLayoutGroup Icon", _foldLcdMatrix, () =>
+                {
+                    DrawPropertyField(SP("lcdPixelScale"), "Pixel Cell Scale");
+                    DrawPropertyField(SP("lcdSubpixelStrength"), "RGB Subpixels");
+                    DrawPropertyField(SP("lcdInversion"), "Polarity Inversion");
+                }, "cells + subpixels");
+                DrawSubSection("Panel Behavior", "d_RawImage Icon", _foldLcdPanel, () =>
+                {
+                    DrawPropertyField(SP("lcdResponseSmear"), "Response Smear");
+                    DrawPropertyField(SP("lcdViewingAngle"), "Viewing Angle Shift");
+                    DrawPropertyField(SP("lcdBacklightBleed"), "Backlight Bleed");
+                }, "response + backlight");
+            }
+            else CrowFxEditorUI.Hint("Enable LCD Display for pixel cells, RGB subpixels, response behavior, and panel defects.");
+
+            MarkDrawnMany("lcdEnabled", "lcdIntensity", "lcdPixelScale", "lcdSubpixelStrength", "lcdInversion",
+                "lcdViewingAngle", "lcdBacklightBleed", "lcdResponseSmear");
+            DrawAutoRemaining(SectionKeys.Lcd);
+        }
+
+        private void DrawDataDrivenPresetAssets()
+        {
+            if (EditorApplication.timeSinceStartup >= _nextPresetAssetRefresh)
+            {
+                _nextPresetAssetRefresh = EditorApplication.timeSinceStartup + 2.0;
+                DataDrivenPresets.Clear();
+                string[] guids = AssetDatabase.FindAssets("t:CrowFXPresetAsset");
+                for (int i = 0; i < guids.Length; i++)
+                {
+                    var preset = AssetDatabase.LoadAssetAtPath<CrowFXPresetAsset>(AssetDatabase.GUIDToAssetPath(guids[i]));
+                    if (preset != null) DataDrivenPresets.Add(preset);
+                }
+                DataDrivenPresets.Sort((a, b) => string.Compare(a.displayName, b.displayName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (DataDrivenPresets.Count == 0) return;
+
+            using (CrowFxEditorUI.PanelScope())
+            {
+                GUILayout.Label("PROJECT PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                CrowFxEditorUI.Hint("Data-driven presets carry metadata, dependencies and a versioned profile. Applying one replaces the complete stack.");
+                for (int i = 0; i < DataDrivenPresets.Count; i += 2)
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        DrawDataDrivenPresetButton(DataDrivenPresets[i]);
+                        if (i + 1 < DataDrivenPresets.Count) DrawDataDrivenPresetButton(DataDrivenPresets[i + 1]);
+                        else GUILayout.FlexibleSpace();
+                    }
+                }
+            }
+            GUILayout.Space(5f);
+        }
+
+        private void DrawDataDrivenPresetButton(CrowFXPresetAsset preset)
+        {
+            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
+            string tooltip = $"{preset.usage} · {preset.gpuTier}\n{preset.description}";
+            if (!GUILayout.Button(new GUIContent(label, tooltip), CrowFxEditorUI.Styles.PillButton, GUILayout.MinWidth(120f), GUILayout.ExpandWidth(true))) return;
+
+            if (!preset.CanApply(out string reason))
+            {
+                EditorUtility.DisplayDialog("CrowFX Preset", reason, "OK");
+                return;
+            }
+
+            if (!EditorUtility.DisplayDialog("Replace complete CrowFX stack?", $"Apply “{label}”? Every effect setting will be replaced.\n\n{preset.description}", "Apply", "Cancel")) return;
+            var effect = (CrowImageEffects)target;
+            RestorePreviewStatesIfNeeded();
+            Undo.RecordObject(effect, "Apply CrowFX Preset Asset");
+            preset.ApplyTo(effect);
+            EditorUtility.SetDirty(effect);
+            serializedObject.Update();
+        }
+
+        private void DrawCrtContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("crtEnabled");
+            DrawPropertyField(enabled, "Enable CRT");
+            DrawCrtPresetButtons();
+
+            if (enabled != null && enabled.boolValue)
+            {
+                CrowFxEditorUI.Hint("Display pass ordered after VHS: source-line resampling drives a luminance-aware electron beam, then phosphor structure, glass glow, and tube geometry are applied.");
+
+                DrawSubSection("Tube Geometry", "d_RectTransformBlueprint", _foldCrtGeometry, () =>
+                {
+                    DrawPropertyField(SP("crtCurvature"), "Glass Curvature");
+                    DrawPropertyField(SP("crtOverscan"), "Overscan / Zoom");
+                    DrawPropertyField(SP("crtVignette"), "Edge Falloff");
+                    DrawPropertyField(SP("crtVignetteSoftness"), "Corner Softness");
+                    DrawPropertyField(SP("crtTubeEdge"), "Tube Edge Opacity");
+                }, "warp + rounded glass");
+
+                DrawSubSection("Electron Beam", "d_GridLayoutGroup Icon", _foldCrtBeam, () =>
+                {
+                    DrawPropertyField(SP("crtScanlineStrength"), "Raster Strength");
+                    DrawPropertyField(SP("crtScanlineCount"), "Source Raster Lines");
+                    DrawPropertyField(SP("crtBeamWidth"), "Beam Width");
+                    DrawPropertyField(SP("crtFocus"), "Beam Focus");
+                    DrawPropertyField(SP("crtConvergencePx"), "Convergence Error (px)");
+                    CrowFxEditorUI.Hint("Source Raster Lines resamples the image onto actual beam rows. Use 224-288 for consoles, 400-576 for monitors, or 0 for half the output height.");
+                }, "visible raster gaps");
+
+                DrawSubSection("Phosphor Structure", "d_PreTextureRGB", _foldCrtPhosphor, () =>
+                {
+                    DrawPropertyField(SP("crtMaskMode"), "Mask Layout");
+                    DrawPropertyField(SP("crtMaskStrength"), "Mask Visibility");
+                    DrawPropertyField(SP("crtMaskScale"), "Phosphor Scale (px)");
+                    DrawPropertyField(SP("crtBrightness"), "Light Compensation");
+                }, "grille / slot / shadow");
+
+                DrawSubSection("Glow & Signal", "d_PreMatSphere", _foldCrtFinish, () =>
+                {
+                    DrawPropertyField(SP("crtBloom"), "Halation");
+                    DrawPropertyField(SP("crtBloomRadius"), "Glow Radius");
+                    DrawPropertyField(SP("crtBloomThreshold"), "Bloom Threshold");
+                    DrawPropertyField(SP("crtBlackLevel"), "Black Pedestal");
+                    DrawPropertyField(SP("crtNoise"), "Electronic Grain");
+                    DrawPropertyField(SP("crtFlicker"), "Power Flicker");
+                    DrawPropertyField(SP("crtFlickerHz"), "Flicker Frequency");
+                    DrawPropertyField(SP("crtHumBar"), "Mains Hum Bar");
+                }, "glass bloom + grain");
+            }
+            else
+            {
+                CrowFxEditorUI.Hint("Enable CRT to reveal display simulation controls.");
+            }
+
+            MarkDrawnMany("crtEnabled", "crtCurvature", "crtOverscan", "crtScanlineStrength", "crtScanlineCount", "crtBeamWidth",
+                "crtMaskMode", "crtMaskStrength", "crtMaskScale", "crtBloom", "crtBloomRadius", "crtVignette",
+                "crtVignetteSoftness", "crtNoise", "crtFlicker", "crtBrightness", "crtTubeEdge",
+                "crtBloomThreshold", "crtConvergencePx", "crtFocus", "crtBlackLevel", "crtHumBar", "crtFlickerHz");
+            DrawAutoRemaining(SectionKeys.Crt);
+        }
+
+        private void DrawVhsContent()
+        {
+            BeginSectionDrawn();
+            var enabled = SP("vhsEnabled");
+            DrawPropertyField(enabled, "Enable VHS");
+            DrawVhsPresetButtons();
+
+            if (enabled != null && enabled.boolValue)
+            {
+                DrawPropertyField(SP("vhsIntensity"), "Tape Mix");
+                CrowFxEditorUI.Hint("Signal pass ordered before CRT. Luma and chroma are processed separately in YIQ so color delay, bandwidth loss, and RF damage behave like tape rather than a screen-space glitch overlay.");
+
+                DrawSubSection("Tape Transport", "d_Animation.Play", _foldVhsTransport, () =>
+                {
+                    DrawPropertyField(SP("vhsStandard"), "Television Standard");
+                    DrawPropertyField(SP("vhsTapeMode"), "Recording Speed");
+                    DrawPropertyField(SP("vhsTapeSpeed"), "Transport Speed");
+                    DrawPropertyField(SP("vhsHorizontalJitter"), "Line Jitter (px)");
+                    DrawPropertyField(SP("vhsLineWobble"), "Time-base Wobble (px)");
+                    DrawPropertyField(SP("vhsInterlace"), "Field Interlace");
+                }, "time-base instability");
+
+                DrawSubSection("Tracking", "d_VerticalLayoutGroup Icon", _foldVhsTracking, () =>
+                {
+                    DrawPropertyField(SP("vhsTracking"), "Tracking Error");
+                    DrawPropertyField(SP("vhsTrackingSpeed"), "Band Travel Speed");
+                    DrawPropertyField(SP("vhsTrackingWidth"), "Band Height");
+                    DrawPropertyField(SP("vhsHeadSwitching"), "Head Switching");
+                    DrawPropertyField(SP("vhsHeadSwitchHeight"), "Bottom Region Height");
+                }, "bands + lower-edge tear");
+
+                DrawSubSection("Recorded Signal", "d_PreTextureRGB", _foldVhsSignal, () =>
+                {
+                    DrawPropertyField(SP("vhsChromaBleed"), "Chroma Delay (px)");
+                    DrawPropertyField(SP("vhsChromaBlur"), "Chroma Smear (px)");
+                    DrawPropertyField(SP("vhsColorLoss"), "Generation Color Loss");
+                    DrawPropertyField(SP("vhsGeneration"), "Copy Generation");
+                    DrawPropertyField(SP("vhsVerticalChromaBlur"), "Vertical Chroma Loss");
+                }, "low-bandwidth chroma");
+
+                DrawSubSection("Noise & Dropouts", "d_console.warnicon", _foldVhsDamage, () =>
+                {
+                    DrawPropertyField(SP("vhsLumaNoise"), "Luma Grain");
+                    DrawPropertyField(SP("vhsChromaNoise"), "Chroma Speckle");
+                    DrawPropertyField(SP("vhsDropout"), "RF Dropouts");
+                    DrawPropertyField(SP("vhsAgcInstability"), "AGC Pumping");
+                }, "grain + short RF dashes");
+            }
+            else
+            {
+                CrowFxEditorUI.Hint("Enable VHS to reveal tape transport, tracking, recorded-signal, and dropout controls.");
+            }
+
+            MarkDrawnMany("vhsEnabled", "vhsIntensity", "vhsTapeSpeed", "vhsHorizontalJitter", "vhsLineWobble",
+                "vhsTracking", "vhsTrackingSpeed", "vhsTrackingWidth", "vhsChromaBleed", "vhsChromaBlur",
+                "vhsColorLoss", "vhsLumaNoise", "vhsChromaNoise", "vhsDropout", "vhsHeadSwitching",
+                "vhsHeadSwitchHeight", "vhsInterlace", "vhsStandard", "vhsTapeMode", "vhsGeneration",
+                "vhsAgcInstability", "vhsVerticalChromaBlur");
+            DrawAutoRemaining(SectionKeys.Vhs);
+        }
+
+        private void DrawFullStackPresetButtons()
+        {
+            using (CrowFxEditorUI.PanelScope())
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("LOOK LIBRARY", CrowFxEditorUI.Styles.SubHeaderLabel);
+                    EditorGUILayout.LabelField($"{FullStackPresetCount} authored looks", CrowFxEditorUI.Styles.HeaderHint, GUILayout.Width(110f));
+                }
+
+                EditorGUILayout.LabelField("Browse first. Inspect the recipe. Apply only when it is right.", CrowFxEditorUI.Styles.HintText);
+                GUILayout.Space(5f);
+                CrowFxEditorUI.SearchBar("Search looks", ref _fullPresetSearch, Pref_FullPresetSearch);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    string[] categoryNames = new string[FullStackPresetCategories.Length];
+                    for (int i = 0; i < categoryNames.Length; i++)
+                        categoryNames[i] = $"{FullStackPresetCategories[i].Title}  ·  {FullStackPresetCategories[i].Entries.Length} LOOKS";
+
+                    int nextCategory = CrowFxEditorUI.ThemedPopup("look-library-category", _fullPresetCategory, categoryNames, GUILayout.ExpandWidth(true));
+                    if (nextCategory != _fullPresetCategory)
+                    {
+                        _fullPresetCategory = nextCategory;
+                        EditorPrefs.SetInt(Pref_FullPresetCategory, nextCategory);
+                        if (string.IsNullOrWhiteSpace(_fullPresetSearch))
+                            SelectFullStackPreset(FullStackPresetCategories[nextCategory].Entries[0].Preset);
+                    }
+
+                    bool nextFavoritesOnly = GUILayout.Toggle(_fullPresetFavoritesOnly, "SAVED", EditorStyles.miniButton, GUILayout.Width(58f));
+                    if (nextFavoritesOnly != _fullPresetFavoritesOnly)
+                    {
+                        _fullPresetFavoritesOnly = nextFavoritesOnly;
+                        EditorPrefs.SetBool(Pref_FullPresetFavoritesOnly, nextFavoritesOnly);
+                    }
+                }
+
+                var browsedCategory = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
+                EditorGUILayout.LabelField(browsedCategory.Hint, CrowFxEditorUI.Styles.HeaderHint);
+
+                var matches = CollectVisibleFullStackPresets();
+                GUILayout.Space(4f);
+                DrawFullStackBrowserList(matches);
+            }
+
+            GUILayout.Space(4f);
+            DrawSelectedFullStackPreset();
+            GUILayout.Space(6f);
+        }
+
+        private List<(FullStackPresetCategory category, FullStackPresetEntry entry)> CollectVisibleFullStackPresets()
+        {
+            var matches = new List<(FullStackPresetCategory category, FullStackPresetEntry entry)>();
+            string query = _fullPresetSearch?.Trim() ?? "";
+            bool globalSearch = query.Length > 0;
+
+            for (int categoryIndex = 0; categoryIndex < FullStackPresetCategories.Length; categoryIndex++)
+            {
+                if (!globalSearch && categoryIndex != _fullPresetCategory) continue;
+                var category = FullStackPresetCategories[categoryIndex];
+                for (int entryIndex = 0; entryIndex < category.Entries.Length; entryIndex++)
+                {
+                    var entry = category.Entries[entryIndex];
+                    if (_fullPresetFavoritesOnly && !_favoriteFullStackPresets.Contains(entry.Preset)) continue;
+                    if (globalSearch &&
+                        entry.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        category.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        category.Hint.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        GetFullStackPresetDescription(entry.Preset).IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        GetFullStackPresetPipeline(entry.Preset).IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    matches.Add((category, entry));
+                }
+            }
+
+            return matches;
+        }
+
+        private void DrawFullStackBrowserList(List<(FullStackPresetCategory category, FullStackPresetEntry entry)> matches)
+        {
+            if (matches.Count == 0)
+            {
+                CrowFxEditorUI.Hint(_fullPresetFavoritesOnly
+                    ? "No saved looks match this filter. Select a look and use Save Look to build a personal shortlist."
+                    : $"No looks match \"{_fullPresetSearch}\".");
+                return;
+            }
+
+            int visibleCount = Mathf.Min(matches.Count, 12);
+            EditorGUILayout.LabelField($"{matches.Count} {(matches.Count == 1 ? "look" : "looks")}", CrowFxEditorUI.Styles.HeaderHint);
+            for (int i = 0; i < visibleCount; i++)
+                DrawFullStackBrowserRow(matches[i].category, matches[i].entry);
+
+            if (matches.Count > visibleCount)
+                CrowFxEditorUI.Hint($"Showing the first {visibleCount} matches. Refine the search to narrow the library.");
+        }
+
+        private void DrawFullStackBrowserRow(FullStackPresetCategory category, FullStackPresetEntry entry)
+        {
+            bool selected = entry.Preset == _selectedFullStackPreset;
+            bool favorite = _favoriteFullStackPresets.Contains(entry.Preset);
+            var rect = GUILayoutUtility.GetRect(0f, 34f, GUILayout.ExpandWidth(true));
+            var favoriteRect = new Rect(rect.xMax - 51f, rect.y + 7f, 46f, 20f);
+            var selectRect = new Rect(rect.x, rect.y, rect.width - 55f, rect.height);
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, selected ? new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.34f) : new Color(1f, 1f, 1f, 0.025f));
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height), new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.9f));
+                CrowFxEditorUI.Theme.DrawBorder(rect);
+            }
+
+            if (GUI.Button(selectRect, GUIContent.none, GUIStyle.none))
+                SelectFullStackPreset(entry.Preset);
+
+            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, 16f);
+            var detailRect = new Rect(rect.x + 10f, rect.y + 17f, selectRect.width - 16f, 14f);
+            GUI.Label(nameRect, entry.Label, CrowFxEditorUI.Styles.SubHeaderLabel);
+            GUI.Label(detailRect, GetFullStackPresetPipeline(entry.Preset), CrowFxEditorUI.Styles.HeaderHint);
+
+            string favoriteLabel = favorite ? "SAVED" : "SAVE";
+            if (GUI.Button(favoriteRect, new GUIContent(favoriteLabel, favorite ? "Remove from saved looks" : "Save this look for quick access"), EditorStyles.miniButton))
+                ToggleFullStackPresetFavorite(entry.Preset);
+        }
+
+        private void DrawSelectedFullStackPreset()
+        {
+            var category = FindFullStackPresetCategory(_selectedFullStackPreset);
+            var entry = FindFullStackPresetEntry(_selectedFullStackPreset);
+            if (category == null) return;
+
+            using (CrowFxEditorUI.PanelScope())
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
+                    bool favorite = _favoriteFullStackPresets.Contains(_selectedFullStackPreset);
+                    if (CrowFxEditorUI.MiniPill(favorite ? "UNSAVE" : "SAVE LOOK", GUILayout.Width(76f)))
+                        ToggleFullStackPresetFavorite(_selectedFullStackPreset);
+                }
+
+                GUILayout.Space(4f);
+                EditorGUILayout.LabelField(entry.Label, CrowFxEditorUI.Styles.SectionTitle);
+                CrowFxEditorUI.Hint(GetFullStackPresetDescription(_selectedFullStackPreset));
+                EditorGUILayout.LabelField($"RECIPE  {GetFullStackPresetPipeline(_selectedFullStackPreset)}", CrowFxEditorUI.Styles.SummaryText);
+
+                EditorGUI.BeginChangeCheck();
+                float nextAmount = EditorGUILayout.Slider(new GUIContent("Amount", "Sets the final whole-look blend while preserving the authored internal relationships."), _fullPresetAmount, 0.25f, 1f);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _fullPresetAmount = nextAmount;
+                    EditorPrefs.SetFloat(Pref_FullPresetAmount, nextAmount);
+                    if (_fullPresetPreviewActive)
+                        PreviewFullStackPreset(_selectedFullStackPreset, entry.Label);
+                }
+
+                if (_fullPresetPreviewActive)
+                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {_previewedFullStackPreset}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
+                else
+                    EditorGUILayout.LabelField("SELECTING IS SAFE  •  APPLY REQUIRES CONFIRMATION  •  UNDO SUPPORTED", CrowFxEditorUI.Styles.HeaderHint);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
+                    if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                    {
+                        if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
+                        else PreviewFullStackPreset(_selectedFullStackPreset, entry.Label);
+                    }
+
+                    if (CrowFxEditorUI.PillButton($"APPLY {entry.Label.ToUpperInvariant()}", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
+                        ConfirmAndApplyFullStackPreset(_selectedFullStackPreset, entry.Label);
+                }
+            }
+        }
+
+        private void DrawPresetsContent()
+        {
+            BeginSectionDrawn();
+            DrawDataDrivenPresetAssets();
+            DrawFullStackPresetButtons();
+        }
+
+        private void SelectFullStackPreset(FullStackPreset preset)
+        {
+            _selectedFullStackPreset = preset;
+            EditorPrefs.SetInt(Pref_FullPresetSelection, (int)preset);
+            if (_fullPresetPreviewActive)
+            {
+                var entry = FindFullStackPresetEntry(preset);
+                PreviewFullStackPreset(preset, entry.Label);
+            }
+            GUI.FocusControl(null);
+        }
+
+        private void PreviewFullStackPreset(FullStackPreset preset, string displayName)
+        {
+            var targetFx = (CrowImageEffects)target;
+            if (targetFx == null) return;
+
+            RestoreSectionPreviewStatesIfNeeded();
+
+            if (!_fullPresetPreviewActive)
+            {
+                _fullPresetPreviewSnapshot = EditorJsonUtility.ToJson(targetFx);
+                _fullPresetPreviewTargetId = targetFx.GetInstanceID();
+                _fullPresetPreviewActive = true;
+            }
+            else
+            {
+                RestoreFullStackPresetPreviewSnapshot(clearState: false);
+            }
+
+            _previewedFullStackPreset = preset;
+            _suspendAutoProfileSync = true;
+            ApplyFullStackPreset(preset, displayName, previewOnly: true);
+            serializedObject.Update();
+            SceneView.RepaintAll();
+            Repaint();
+        }
+
+        private void RestoreFullStackPresetPreviewIfNeeded()
+        {
+            // Inspector reloads and selection changes must never leave a browsed look committed.
+            RestoreFullStackPresetPreviewSnapshot(clearState: true);
+        }
+
+        private void RestoreFullStackPresetPreviewSnapshot(bool clearState)
+        {
+            if (!_fullPresetPreviewActive || string.IsNullOrEmpty(_fullPresetPreviewSnapshot)) return;
+
+            var targetFx = (CrowImageEffects)target;
+            if (targetFx != null && targetFx.GetInstanceID() == _fullPresetPreviewTargetId)
+            {
+                EditorJsonUtility.FromJsonOverwrite(_fullPresetPreviewSnapshot, targetFx);
+                EditorUtility.SetDirty(targetFx);
+                serializedObject.Update();
+            }
+
+            if (clearState)
+            {
+                _fullPresetPreviewActive = false;
+                _fullPresetPreviewSnapshot = null;
+                _fullPresetPreviewTargetId = 0;
+                _suspendAutoProfileSync = false;
+            }
+
+            SceneView.RepaintAll();
+            Repaint();
+        }
+
+        private static FullStackPresetCategory FindFullStackPresetCategory(FullStackPreset preset)
+        {
+            for (int i = 0; i < FullStackPresetCategories.Length; i++)
+            {
+                var category = FullStackPresetCategories[i];
+                for (int j = 0; j < category.Entries.Length; j++)
+                    if (category.Entries[j].Preset == preset) return category;
+            }
+            return null;
+        }
+
+        private static FullStackPresetEntry FindFullStackPresetEntry(FullStackPreset preset)
+        {
+            var category = FindFullStackPresetCategory(preset);
+            if (category != null)
+                for (int i = 0; i < category.Entries.Length; i++)
+                    if (category.Entries[i].Preset == preset) return category.Entries[i];
+            return default;
+        }
+
+        private void DrawFullStackPresetButtonsLegacy()
+        {
+            using (CrowFxEditorUI.PanelScope())
+            {
+                EditorGUILayout.LabelField("FULL STACK PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                EditorGUILayout.LabelField("Whole-stack looks · confirmation required · Undo supported", CrowFxEditorUI.Styles.HeaderHint);
+                GUILayout.Space(3);
+                CrowFxEditorUI.SearchBar("Find", ref _fullPresetSearch, Pref_FullPresetSearch);
+                GUILayout.Space(3);
+                DrawFullStackCategoryRail();
+            }
+
+            GUILayout.Space(4);
+            using (CrowFxEditorUI.PanelScope())
+            {
+                if (string.IsNullOrWhiteSpace(_fullPresetSearch))
+                {
+                    var category = FullStackPresetCategories[_fullPresetCategory];
+                    CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
+                    EditorGUILayout.LabelField(category.Hint, CrowFxEditorUI.Styles.HeaderHint);
+                    GUILayout.Space(2);
+                    DrawFullStackPresetGrid(category.Entries, category);
+                }
+                else
+                {
+                    DrawFullStackSearchResults(_fullPresetSearch.Trim());
+                }
+            }
+            GUILayout.Space(6);
+        }
+
+        private void DrawFullStackCategoryRail()
+        {
+            for (int row = 0; row < 2; row++)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    for (int column = 0; column < 5; column++)
+                    {
+                        int index = row * 5 + column;
+                        var category = FullStackPresetCategories[index];
+                        string tooltip = $"{category.Title}\n{category.Hint}";
+                        if (CrowFxEditorUI.SelectionPill(category.ShortLabel, index == _fullPresetCategory,
+                            tooltip, GUILayout.ExpandWidth(true)))
+                        {
+                            _fullPresetCategory = index;
+                            _fullPresetSearch = "";
+                            EditorPrefs.SetInt(Pref_FullPresetCategory, index);
+                            EditorPrefs.SetString(Pref_FullPresetSearch, "");
+                            GUI.FocusControl(null);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void DrawFullStackPresetGrid(IReadOnlyList<FullStackPresetEntry> entries, FullStackPresetCategory category)
+        {
+            for (int i = 0; i < entries.Count; i += 2)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    DrawFullStackPresetChoice(entries[i], category);
+                    if (i + 1 < entries.Count)
+                        DrawFullStackPresetChoice(entries[i + 1], category);
+                }
+            }
+        }
+
+        private void DrawFullStackPresetChoice(FullStackPresetEntry entry, FullStackPresetCategory category)
+        {
+            string tooltip = $"{category.Title}\n{category.Hint}\n\nReplaces the complete effect stack after confirmation.";
+            if (CrowFxEditorUI.SelectionPill(entry.Label, false, tooltip, GUILayout.ExpandWidth(true)))
+                ConfirmAndApplyFullStackPreset(entry.Preset, entry.Label);
+        }
+
+        private void DrawFullStackSearchResults(string query)
+        {
+            var matches = new List<(FullStackPresetCategory category, FullStackPresetEntry entry)>();
+            for (int categoryIndex = 0; categoryIndex < FullStackPresetCategories.Length; categoryIndex++)
+            {
+                var category = FullStackPresetCategories[categoryIndex];
+                for (int entryIndex = 0; entryIndex < category.Entries.Length; entryIndex++)
+                {
+                    var entry = category.Entries[entryIndex];
+                    if (entry.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        category.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        category.Hint.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        matches.Add((category, entry));
+                    }
+                }
+            }
+
+            CrowFxEditorUI.TagPill("SEARCH RESULTS", new Color(0.42f, 0.62f, 0.86f, 0.22f), GUILayout.ExpandWidth(true));
+            if (matches.Count == 0)
+            {
+                CrowFxEditorUI.Hint($"No full-stack presets match \"{query}\".");
+                return;
+            }
+
+            for (int i = 0; i < matches.Count; i += 2)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    DrawFullStackPresetChoice(matches[i].entry, matches[i].category);
+                    if (i + 1 < matches.Count)
+                        DrawFullStackPresetChoice(matches[i + 1].entry, matches[i + 1].category);
+                }
+            }
+        }
+
+        private void DrawJitterPresetButtons()
+        {
+            DrawPresetButtonGrid("JITTER PRESETS",
+                ("Subtle RGB", () => ApplyJitterPreset(JitterPreset.SubtleRgb)),
+                ("VHS Drift", () => ApplyJitterPreset(JitterPreset.VhsDrift)),
+                ("Digital Shake", () => ApplyJitterPreset(JitterPreset.DigitalShake)),
+                ("Glitch Hash", () => ApplyJitterPreset(JitterPreset.GlitchHash)));
+        }
+
+        private void DrawBleedPresetButtons()
+        {
+            DrawPresetButtonGrid("BLEED PRESETS",
+                ("Soft Lens", () => ApplyBleedPreset(BleedPreset.SoftLens)),
+                ("VHS Chroma", () => ApplyBleedPreset(BleedPreset.VhsChroma)),
+                ("Radial Fringe", () => ApplyBleedPreset(BleedPreset.RadialFringe)),
+                ("Neon Smear", () => ApplyBleedPreset(BleedPreset.NeonSmear)));
+        }
+
+        private void DrawGhostPresetButtons()
+        {
+            DrawPresetButtonGrid("GHOST PRESETS",
+                ("Persistence", () => ApplyGhostPreset(GhostPreset.Persistence)),
+                ("LCD Smear", () => ApplyGhostPreset(GhostPreset.LcdSmear)),
+                ("Dream Trail", () => ApplyGhostPreset(GhostPreset.DreamTrail)),
+                ("Security Cam", () => ApplyGhostPreset(GhostPreset.SecurityCam)));
+        }
+
+        private void DrawUnsharpPresetButtons()
+        {
+            DrawPresetButtonGrid("SHARPEN PRESETS",
+                ("Soft Detail", () => ApplyUnsharpPreset(UnsharpPreset.SoftDetail)),
+                ("Crisp Pixel", () => ApplyUnsharpPreset(UnsharpPreset.CrispPixel)),
+                ("Luma Clean", () => ApplyUnsharpPreset(UnsharpPreset.LumaClean)),
+                ("Aggressive", () => ApplyUnsharpPreset(UnsharpPreset.Aggressive)));
+        }
+
+        private void DrawLensPresetButtons()
+        {
+            DrawPresetButtonGrid("LENS PRESETS",
+                ("Clean Optics", () => ApplyLensPreset(LensPreset.CleanOptics)),
+                ("Cinema Glass", () => ApplyLensPreset(LensPreset.CinemaGlass)),
+                ("Camcorder", () => ApplyLensPreset(LensPreset.CamcorderSensor)),
+                ("Dream Bloom", () => ApplyLensPreset(LensPreset.DreamBloom)));
+        }
+
+        private void DrawFilmPresetButtons()
+        {
+            DrawPresetButtonGrid("FILM PRESETS",
+                ("Fine 35mm", () => ApplyFilmPreset(FilmPreset.Fine35)),
+                ("Warm 16mm", () => ApplyFilmPreset(FilmPreset.Warm16)),
+                ("Documentary", () => ApplyFilmPreset(FilmPreset.Documentary)),
+                ("Damaged Stock", () => ApplyFilmPreset(FilmPreset.DamagedStock)));
+        }
+
+        private void DrawMotionPresetButtons()
+        {
+            DrawPresetButtonGrid("MOTION PRESETS",
+                ("Subtle Motion", () => ApplyMotionPreset(MotionPreset.SubtleMotion)),
+                ("Datamosh", () => ApplyMotionPreset(MotionPreset.Datamosh)),
+                ("Frozen Blocks", () => ApplyMotionPreset(MotionPreset.FrozenBlocks)),
+                ("Signal Tear", () => ApplyMotionPreset(MotionPreset.SignalTear)));
+        }
+
+        private void DrawDigitalPresetButtons()
+        {
+            DrawPresetButtonGrid("CODEC PRESETS",
+                ("Clean Stream", () => ApplyDigitalPreset(DigitalPreset.CleanStream)),
+                ("Web Video", () => ApplyDigitalPreset(DigitalPreset.WebVideo)),
+                ("Low Bitrate", () => ApplyDigitalPreset(DigitalPreset.LowBitrate)),
+                ("Broken Codec", () => ApplyDigitalPreset(DigitalPreset.BrokenCodec)));
+        }
+
+        private void DrawCompositePresetButtons()
+        {
+            DrawPresetButtonGrid("SIGNAL PRESETS",
+                ("Clean Decode", () => ApplyCompositePreset(CompositePreset.CleanDecode)),
+                ("Broadcast", () => ApplyCompositePreset(CompositePreset.Broadcast)),
+                ("Consumer Cable", () => ApplyCompositePreset(CompositePreset.ConsumerCable)),
+                ("Unstable RF", () => ApplyCompositePreset(CompositePreset.UnstableRf)));
+        }
+
+        private void DrawLcdPresetButtons()
+        {
+            DrawPresetButtonGrid("PANEL PRESETS",
+                ("Modern Panel", () => ApplyLcdPreset(LcdPreset.ModernPanel)),
+                ("Retro Handheld", () => ApplyLcdPreset(LcdPreset.RetroHandheld)),
+                ("Slow TN", () => ApplyLcdPreset(LcdPreset.SlowTn)),
+                ("Damaged Panel", () => ApplyLcdPreset(LcdPreset.DamagedPanel)));
+        }
+
+        private void DrawPresetButtonGrid(string title,
+            (string label, Action apply) first, (string label, Action apply) second,
+            (string label, Action apply) third, (string label, Action apply) fourth)
+        {
+            GUILayout.Space(4);
+            using (CrowFxEditorUI.PanelScope())
+            {
+                EditorGUILayout.LabelField(title, CrowFxEditorUI.Styles.SubHeaderLabel);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill(first.label, GUILayout.ExpandWidth(true))) first.apply();
+                    if (CrowFxEditorUI.MiniPill(second.label, GUILayout.ExpandWidth(true))) second.apply();
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill(third.label, GUILayout.ExpandWidth(true))) third.apply();
+                    if (CrowFxEditorUI.MiniPill(fourth.label, GUILayout.ExpandWidth(true))) fourth.apply();
+                }
+            }
+        }
+
+        private void DrawCrtPresetButtons()
+        {
+            GUILayout.Space(4);
+            using (CrowFxEditorUI.PanelScope())
+            {
+                EditorGUILayout.LabelField("DISPLAY PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill("Consumer TV", GUILayout.ExpandWidth(true))) ApplyCrtPreset(CrtPreset.ConsumerTv);
+                    if (CrowFxEditorUI.MiniPill("Arcade", GUILayout.ExpandWidth(true))) ApplyCrtPreset(CrtPreset.Arcade);
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill("PVM / BVM", GUILayout.ExpandWidth(true))) ApplyCrtPreset(CrtPreset.Pvm);
+                    if (CrowFxEditorUI.MiniPill("PC Monitor", GUILayout.ExpandWidth(true))) ApplyCrtPreset(CrtPreset.PcMonitor);
+                }
+            }
+        }
+
+        private void DrawVhsPresetButtons()
+        {
+            GUILayout.Space(4);
+            using (CrowFxEditorUI.PanelScope())
+            {
+                EditorGUILayout.LabelField("TAPE PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill("Clean SP", GUILayout.ExpandWidth(true))) ApplyVhsPreset(VhsPreset.CleanSp);
+                    if (CrowFxEditorUI.MiniPill("Consumer", GUILayout.ExpandWidth(true))) ApplyVhsPreset(VhsPreset.Consumer);
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (CrowFxEditorUI.MiniPill("Rental Copy", GUILayout.ExpandWidth(true))) ApplyVhsPreset(VhsPreset.RentalCopy);
+                    if (CrowFxEditorUI.MiniPill("Damaged EP", GUILayout.ExpandWidth(true))) ApplyVhsPreset(VhsPreset.DamagedEp);
+                }
+            }
+        }
+
+        private void ApplyLensPreset(LensPreset preset)
+        {
+            SetPresetBool("lensSensorEnabled", true); SetLensPresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetLensPresetValues(LensPreset preset)
+        {
+            switch (preset)
+            {
+                case LensPreset.CleanOptics:
+                    SetPresetFloat("lensSensorIntensity", 0.35f); SetPresetFloat("lensDistortion", 0.01f); SetPresetFloat("lensChromaticAberration", 0.15f);
+                    SetPresetFloat("lensVignette", 0.04f); SetPresetFloat("lensBloom", 0.04f); SetPresetFloat("lensBloomRadius", 1.5f);
+                    SetPresetFloat("sensorRollingShutter", 0f); SetPresetFloat("sensorNoise", 0.002f); SetPresetFloat("sensorDeadPixels", 0f); break;
+                case LensPreset.CinemaGlass:
+                    SetPresetFloat("lensSensorIntensity", 0.62f); SetPresetFloat("lensDistortion", 0.025f); SetPresetFloat("lensChromaticAberration", 0.30f);
+                    SetPresetFloat("lensVignette", 0.16f); SetPresetFloat("lensBloom", 0.14f); SetPresetFloat("lensBloomRadius", 3f);
+                    SetPresetFloat("sensorRollingShutter", 0.15f); SetPresetFloat("sensorNoise", 0.008f); SetPresetFloat("sensorDeadPixels", 0f); break;
+                case LensPreset.CamcorderSensor:
+                    SetPresetFloat("lensSensorIntensity", 0.62f); SetPresetFloat("lensDistortion", 0.012f); SetPresetFloat("lensChromaticAberration", 0.45f);
+                    SetPresetFloat("lensVignette", 0.08f); SetPresetFloat("lensBloom", 0.06f); SetPresetFloat("lensBloomRadius", 2f);
+                    SetPresetFloat("sensorRollingShutter", 2f); SetPresetFloat("sensorNoise", 0.025f); SetPresetFloat("sensorDeadPixels", 0.02f); break;
+                case LensPreset.DreamBloom:
+                    SetPresetFloat("lensSensorIntensity", 0.68f); SetPresetFloat("lensDistortion", -0.01f); SetPresetFloat("lensChromaticAberration", 1.10f);
+                    SetPresetFloat("lensVignette", 0.10f); SetPresetFloat("lensBloom", 0.28f); SetPresetFloat("lensBloomRadius", 4.5f);
+                    SetPresetFloat("sensorRollingShutter", 0.20f); SetPresetFloat("sensorNoise", 0.006f); SetPresetFloat("sensorDeadPixels", 0f); break;
+            }
+        }
+
+        private void ApplyFilmPreset(FilmPreset preset)
+        {
+            SetPresetBool("filmEnabled", true); SetFilmPresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetFilmPresetValues(FilmPreset preset)
+        {
+            switch (preset)
+            {
+                case FilmPreset.Fine35:
+                    SetPresetFloat("filmIntensity", 0.42f); SetPresetFloat("filmGrain", 0.035f); SetPresetFloat("filmGrainSize", 0.8f);
+                    SetPresetFloat("filmHalation", 0.08f); SetPresetFloat("filmHalationRadius", 2f); SetPresetFloat("filmGateWeave", 0.08f);
+                    SetPresetFloat("filmDust", 0f); SetPresetFloat("filmScratches", 0f); SetPresetFloat("filmFlicker", 0.004f); break;
+                case FilmPreset.Warm16:
+                    SetPresetFloat("filmIntensity", 0.58f); SetPresetFloat("filmGrain", 0.075f); SetPresetFloat("filmGrainSize", 1.4f);
+                    SetPresetFloat("filmHalation", 0.15f); SetPresetFloat("filmHalationRadius", 2.5f); SetPresetFloat("filmGateWeave", 0.20f);
+                    SetPresetFloat("filmDust", 0.015f); SetPresetFloat("filmScratches", 0.005f); SetPresetFloat("filmFlicker", 0.008f); break;
+                case FilmPreset.Documentary:
+                    SetPresetFloat("filmIntensity", 0.50f); SetPresetFloat("filmGrain", 0.060f); SetPresetFloat("filmGrainSize", 1.1f);
+                    SetPresetFloat("filmHalation", 0.035f); SetPresetFloat("filmHalationRadius", 1.5f); SetPresetFloat("filmGateWeave", 0.12f);
+                    SetPresetFloat("filmDust", 0.012f); SetPresetFloat("filmScratches", 0f); SetPresetFloat("filmFlicker", 0.006f); break;
+                case FilmPreset.DamagedStock:
+                    SetPresetFloat("filmIntensity", 0.72f); SetPresetFloat("filmGrain", 0.14f); SetPresetFloat("filmGrainSize", 1.8f);
+                    SetPresetFloat("filmHalation", 0.10f); SetPresetFloat("filmHalationRadius", 2.7f); SetPresetFloat("filmGateWeave", 0.75f);
+                    SetPresetFloat("filmDust", 0.25f); SetPresetFloat("filmScratches", 0.18f); SetPresetFloat("filmFlicker", 0.035f); break;
+            }
+        }
+
+        private void ApplyMotionPreset(MotionPreset preset)
+        {
+            SetPresetBool("motionGlitchEnabled", true); SetMotionPresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetMotionPresetValues(MotionPreset preset)
+        {
+            switch (preset)
+            {
+                case MotionPreset.SubtleMotion:
+                    SetPresetFloat("motionGlitchIntensity", 0.18f); SetPresetFloat("motionBlockSize", 24f); SetPresetFloat("motionVectorDisplacement", 0.6f);
+                    SetPresetFloat("motionFreezeRate", 0.025f); SetPresetFloat("motionColorSplit", 0.20f); SetPresetFloat("motionHistoryScale", 0.5f); SetPresetFloat("motionHistoryFps", 30f); break;
+                case MotionPreset.Datamosh:
+                    SetPresetFloat("motionGlitchIntensity", 0.55f); SetPresetFloat("motionBlockSize", 32f); SetPresetFloat("motionVectorDisplacement", 2.7f);
+                    SetPresetFloat("motionFreezeRate", 0.15f); SetPresetFloat("motionColorSplit", 0.80f); SetPresetFloat("motionHistoryScale", 0.5f); SetPresetFloat("motionHistoryFps", 10f); break;
+                case MotionPreset.FrozenBlocks:
+                    SetPresetFloat("motionGlitchIntensity", 0.65f); SetPresetFloat("motionBlockSize", 48f); SetPresetFloat("motionVectorDisplacement", 1.2f);
+                    SetPresetFloat("motionFreezeRate", 0.36f); SetPresetFloat("motionColorSplit", 0.35f); SetPresetFloat("motionHistoryScale", 0.5f); SetPresetFloat("motionHistoryFps", 8f); break;
+                case MotionPreset.SignalTear:
+                    SetPresetFloat("motionGlitchIntensity", 0.58f); SetPresetFloat("motionBlockSize", 12f); SetPresetFloat("motionVectorDisplacement", 4.2f);
+                    SetPresetFloat("motionFreezeRate", 0.08f); SetPresetFloat("motionColorSplit", 2.4f); SetPresetFloat("motionHistoryScale", 0.5f); SetPresetFloat("motionHistoryFps", 15f); break;
+            }
+        }
+
+        private void ApplyDigitalPreset(DigitalPreset preset)
+        {
+            SetPresetBool("digitalVideoEnabled", true); SetDigitalPresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetDigitalPresetValues(DigitalPreset preset)
+        {
+            switch (preset)
+            {
+                case DigitalPreset.CleanStream:
+                    SetPresetFloat("digitalVideoIntensity", 0.20f); SetPresetFloat("digitalBlockSize", 8f); SetPresetFloat("digitalQuantization", 0.035f);
+                    SetPresetFloat("digitalRinging", 0.02f); SetPresetFloat("digitalChromaSubsampling", 0.08f); SetPresetFloat("digitalMosquitoNoise", 0.01f); SetPresetFloat("digitalBitratePumping", 0f); break;
+                case DigitalPreset.WebVideo:
+                    SetPresetFloat("digitalVideoIntensity", 0.42f); SetPresetFloat("digitalBlockSize", 16f); SetPresetFloat("digitalQuantization", 0.12f);
+                    SetPresetFloat("digitalRinging", 0.07f); SetPresetFloat("digitalChromaSubsampling", 0.28f); SetPresetFloat("digitalMosquitoNoise", 0.04f); SetPresetFloat("digitalBitratePumping", 0.03f); break;
+                case DigitalPreset.LowBitrate:
+                    SetPresetFloat("digitalVideoIntensity", 0.62f); SetPresetFloat("digitalBlockSize", 24f); SetPresetFloat("digitalQuantization", 0.30f);
+                    SetPresetFloat("digitalRinging", 0.12f); SetPresetFloat("digitalChromaSubsampling", 0.48f); SetPresetFloat("digitalMosquitoNoise", 0.12f); SetPresetFloat("digitalBitratePumping", 0.14f); break;
+                case DigitalPreset.BrokenCodec:
+                    SetPresetFloat("digitalVideoIntensity", 0.78f); SetPresetFloat("digitalBlockSize", 40f); SetPresetFloat("digitalQuantization", 0.52f);
+                    SetPresetFloat("digitalRinging", 0.28f); SetPresetFloat("digitalChromaSubsampling", 0.72f); SetPresetFloat("digitalMosquitoNoise", 0.24f); SetPresetFloat("digitalBitratePumping", 0.35f); break;
+            }
+        }
+
+        private void ApplyCompositePreset(CompositePreset preset)
+        {
+            SetPresetBool("compositeEnabled", true); SetCompositePresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetCompositePresetValues(CompositePreset preset)
+        {
+            SetPresetEnum("compositeStandard", (int)CrowImageEffects.VhsStandard.NTSC);
+            switch (preset)
+            {
+                case CompositePreset.CleanDecode:
+                    SetPresetFloat("compositeIntensity", 0.20f); SetPresetFloat("compositeDotCrawl", 0.025f); SetPresetFloat("compositeRainbow", 0.01f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.90f); SetPresetFloat("compositePhaseError", 0.01f); SetPresetFloat("compositeCombFilter", 0.92f); break;
+                case CompositePreset.Broadcast:
+                    SetPresetFloat("compositeIntensity", 0.32f); SetPresetFloat("compositeDotCrawl", 0.06f); SetPresetFloat("compositeRainbow", 0.025f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.75f); SetPresetFloat("compositePhaseError", 0.02f); SetPresetFloat("compositeCombFilter", 0.82f); break;
+                case CompositePreset.ConsumerCable:
+                    SetPresetFloat("compositeIntensity", 0.48f); SetPresetFloat("compositeDotCrawl", 0.16f); SetPresetFloat("compositeRainbow", 0.07f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.48f); SetPresetFloat("compositePhaseError", 0.06f); SetPresetFloat("compositeCombFilter", 0.58f); break;
+                case CompositePreset.UnstableRf:
+                    SetPresetFloat("compositeIntensity", 0.68f); SetPresetFloat("compositeDotCrawl", 0.34f); SetPresetFloat("compositeRainbow", 0.20f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.28f); SetPresetFloat("compositePhaseError", 0.18f); SetPresetFloat("compositeCombFilter", 0.24f); break;
+            }
+        }
+
+        private void ApplyLcdPreset(LcdPreset preset)
+        {
+            SetPresetBool("lcdEnabled", true); SetLcdPresetValues(preset); ApplySerializedChanges();
+        }
+
+        private void SetLcdPresetValues(LcdPreset preset)
+        {
+            switch (preset)
+            {
+                case LcdPreset.ModernPanel:
+                    SetPresetFloat("lcdIntensity", 0.28f); SetPresetFloat("lcdPixelScale", 1f); SetPresetFloat("lcdSubpixelStrength", 0.12f);
+                    SetPresetFloat("lcdInversion", 0.005f); SetPresetFloat("lcdViewingAngle", 0f); SetPresetFloat("lcdBacklightBleed", 0.015f); SetPresetFloat("lcdResponseSmear", 0.08f); break;
+                case LcdPreset.RetroHandheld:
+                    SetPresetFloat("lcdIntensity", 0.58f); SetPresetFloat("lcdPixelScale", 2.5f); SetPresetFloat("lcdSubpixelStrength", 0.28f);
+                    SetPresetFloat("lcdInversion", 0.018f); SetPresetFloat("lcdViewingAngle", 0.08f); SetPresetFloat("lcdBacklightBleed", 0.04f); SetPresetFloat("lcdResponseSmear", 0.36f); break;
+                case LcdPreset.SlowTn:
+                    SetPresetFloat("lcdIntensity", 0.62f); SetPresetFloat("lcdPixelScale", 2f); SetPresetFloat("lcdSubpixelStrength", 0.22f);
+                    SetPresetFloat("lcdInversion", 0.025f); SetPresetFloat("lcdViewingAngle", 0.22f); SetPresetFloat("lcdBacklightBleed", 0.06f); SetPresetFloat("lcdResponseSmear", 1.4f); break;
+                case LcdPreset.DamagedPanel:
+                    SetPresetFloat("lcdIntensity", 0.76f); SetPresetFloat("lcdPixelScale", 3f); SetPresetFloat("lcdSubpixelStrength", 0.38f);
+                    SetPresetFloat("lcdInversion", 0.09f); SetPresetFloat("lcdViewingAngle", -0.30f); SetPresetFloat("lcdBacklightBleed", 0.22f); SetPresetFloat("lcdResponseSmear", 2.2f); break;
+            }
+        }
+
+        private void UseLens(LensPreset preset) { SetPresetBool("lensSensorEnabled", true); SetLensPresetValues(preset); }
+        private void UseFilm(FilmPreset preset) { SetPresetBool("filmEnabled", true); SetFilmPresetValues(preset); }
+        private void UseMotion(MotionPreset preset) { SetPresetBool("motionGlitchEnabled", true); SetMotionPresetValues(preset); }
+        private void UseDigital(DigitalPreset preset) { SetPresetBool("digitalVideoEnabled", true); SetDigitalPresetValues(preset); }
+        private void UseComposite(CompositePreset preset) { SetPresetBool("compositeEnabled", true); SetCompositePresetValues(preset); }
+        private void UseLcd(LcdPreset preset) { SetPresetBool("lcdEnabled", true); SetLcdPresetValues(preset); }
+
+        private void ApplyCrtPreset(CrtPreset preset)
+        {
+            SetPresetBool("crtEnabled", true);
+            SetCrtPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetCrtPresetValues(CrtPreset preset)
+        {
+            SetPresetFloat("crtTubeEdge", 0.82f); SetPresetFloat("crtBloomThreshold", 0.55f);
+            SetPresetFloat("crtConvergencePx", 0f); SetPresetFloat("crtFocus", 0.32f);
+            SetPresetFloat("crtBlackLevel", 0f); SetPresetFloat("crtHumBar", 0f); SetPresetFloat("crtFlickerHz", 60f);
+            switch (preset)
+            {
+                case CrtPreset.ConsumerTv:
+                    SetPresetFloat("crtCurvature", 0.10f); SetPresetFloat("crtOverscan", 1.04f);
+                    SetPresetFloat("crtScanlineStrength", 0.72f); SetPresetInt("crtScanlineCount", 240); SetPresetFloat("crtBeamWidth", 0.56f);
+                    SetPresetEnum("crtMaskMode", (int)CrowImageEffects.CrtMaskMode.SlotMask); SetPresetFloat("crtMaskStrength", 0.28f); SetPresetFloat("crtMaskScale", 1f);
+                    SetPresetFloat("crtBloom", 0.28f); SetPresetFloat("crtBloomRadius", 1.8f); SetPresetFloat("crtVignette", 0.42f);
+                    SetPresetFloat("crtVignetteSoftness", 0.18f); SetPresetFloat("crtNoise", 0.014f); SetPresetFloat("crtFlicker", 0.012f); SetPresetFloat("crtBrightness", 1.24f);
+                    SetPresetFloat("crtConvergencePx", 0.35f); SetPresetFloat("crtFocus", 0.48f); SetPresetFloat("crtBlackLevel", 0.012f); SetPresetFloat("crtHumBar", 0.012f);
+                    break;
+                case CrtPreset.Arcade:
+                    SetPresetFloat("crtCurvature", 0.07f); SetPresetFloat("crtOverscan", 1.025f);
+                    SetPresetFloat("crtScanlineStrength", 0.68f); SetPresetInt("crtScanlineCount", 288); SetPresetFloat("crtBeamWidth", 0.58f);
+                    SetPresetEnum("crtMaskMode", (int)CrowImageEffects.CrtMaskMode.SlotMask); SetPresetFloat("crtMaskStrength", 0.36f); SetPresetFloat("crtMaskScale", 1f);
+                    SetPresetFloat("crtBloom", 0.36f); SetPresetFloat("crtBloomRadius", 2.1f); SetPresetFloat("crtVignette", 0.30f);
+                    SetPresetFloat("crtVignetteSoftness", 0.14f); SetPresetFloat("crtNoise", 0.008f); SetPresetFloat("crtFlicker", 0.008f); SetPresetFloat("crtBrightness", 1.22f);
+                    SetPresetFloat("crtConvergencePx", 0.18f); SetPresetFloat("crtFocus", 0.36f); SetPresetFloat("crtHumBar", 0.005f);
+                    break;
+                case CrtPreset.Pvm:
+                    SetPresetFloat("crtCurvature", 0.025f); SetPresetFloat("crtOverscan", 1.005f);
+                    SetPresetFloat("crtScanlineStrength", 0.84f); SetPresetInt("crtScanlineCount", 480); SetPresetFloat("crtBeamWidth", 0.40f);
+                    SetPresetEnum("crtMaskMode", (int)CrowImageEffects.CrtMaskMode.ApertureGrille); SetPresetFloat("crtMaskStrength", 0.20f); SetPresetFloat("crtMaskScale", 1f);
+                    SetPresetFloat("crtBloom", 0.12f); SetPresetFloat("crtBloomRadius", 1.1f); SetPresetFloat("crtVignette", 0.14f);
+                    SetPresetFloat("crtVignetteSoftness", 0.08f); SetPresetFloat("crtNoise", 0.003f); SetPresetFloat("crtFlicker", 0.003f); SetPresetFloat("crtBrightness", 1.38f);
+                    SetPresetFloat("crtTubeEdge", 0.42f); SetPresetFloat("crtBloomThreshold", 0.68f); SetPresetFloat("crtFocus", 0.18f);
+                    break;
+                case CrtPreset.PcMonitor:
+                    SetPresetFloat("crtCurvature", 0.035f); SetPresetFloat("crtOverscan", 1.01f);
+                    SetPresetFloat("crtScanlineStrength", 0.76f); SetPresetInt("crtScanlineCount", 600); SetPresetFloat("crtBeamWidth", 0.43f);
+                    SetPresetEnum("crtMaskMode", (int)CrowImageEffects.CrtMaskMode.ShadowMask); SetPresetFloat("crtMaskStrength", 0.42f); SetPresetFloat("crtMaskScale", 1f);
+                    SetPresetFloat("crtBloom", 0.10f); SetPresetFloat("crtBloomRadius", 0.9f); SetPresetFloat("crtVignette", 0.18f);
+                    SetPresetFloat("crtVignetteSoftness", 0.08f); SetPresetFloat("crtNoise", 0.002f); SetPresetFloat("crtFlicker", 0.002f); SetPresetFloat("crtBrightness", 1.36f);
+                    SetPresetFloat("crtTubeEdge", 0.48f); SetPresetFloat("crtBloomThreshold", 0.72f); SetPresetFloat("crtFocus", 0.12f);
+                    break;
+            }
+        }
+
+        private void ApplyVhsPreset(VhsPreset preset)
+        {
+            SetPresetBool("vhsEnabled", true);
+            SetVhsPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetVhsPresetValues(VhsPreset preset)
+        {
+            SetPresetEnum("vhsStandard", (int)CrowImageEffects.VhsStandard.NTSC);
+            SetPresetEnum("vhsTapeMode", (int)CrowImageEffects.VhsTapeMode.SP);
+            SetPresetInt("vhsGeneration", 0); SetPresetFloat("vhsAgcInstability", 0.03f); SetPresetFloat("vhsVerticalChromaBlur", 0.45f);
+            switch (preset)
+            {
+                case VhsPreset.CleanSp:
+                    SetPresetFloat("vhsIntensity", 0.55f); SetPresetFloat("vhsTapeSpeed", 1f);
+                    SetPresetFloat("vhsHorizontalJitter", 0.35f); SetPresetFloat("vhsLineWobble", 0.7f);
+                    SetPresetFloat("vhsTracking", 0.03f); SetPresetFloat("vhsTrackingSpeed", 0.45f); SetPresetFloat("vhsTrackingWidth", 0.03f);
+                    SetPresetFloat("vhsChromaBleed", 1.5f); SetPresetFloat("vhsChromaBlur", 2.2f); SetPresetFloat("vhsColorLoss", 0.05f);
+                    SetPresetFloat("vhsLumaNoise", 0.018f); SetPresetFloat("vhsChromaNoise", 0.008f); SetPresetFloat("vhsDropout", 0.025f);
+                    SetPresetFloat("vhsHeadSwitching", 0.05f); SetPresetFloat("vhsHeadSwitchHeight", 0.025f); SetPresetFloat("vhsInterlace", 0.04f);
+                    break;
+                case VhsPreset.Consumer:
+                    SetPresetFloat("vhsIntensity", 0.80f); SetPresetFloat("vhsTapeSpeed", 1f);
+                    SetPresetFloat("vhsHorizontalJitter", 1.5f); SetPresetFloat("vhsLineWobble", 2f);
+                    SetPresetFloat("vhsTracking", 0.25f); SetPresetFloat("vhsTrackingSpeed", 0.65f); SetPresetFloat("vhsTrackingWidth", 0.055f);
+                    SetPresetFloat("vhsChromaBleed", 3f); SetPresetFloat("vhsChromaBlur", 4f); SetPresetFloat("vhsColorLoss", 0.15f);
+                    SetPresetFloat("vhsLumaNoise", 0.055f); SetPresetFloat("vhsChromaNoise", 0.025f); SetPresetFloat("vhsDropout", 0.12f);
+                    SetPresetFloat("vhsHeadSwitching", 0.20f); SetPresetFloat("vhsHeadSwitchHeight", 0.045f); SetPresetFloat("vhsInterlace", 0.12f);
+                    SetPresetFloat("vhsAgcInstability", 0.08f); SetPresetFloat("vhsVerticalChromaBlur", 1f);
+                    break;
+                case VhsPreset.RentalCopy:
+                    SetPresetFloat("vhsIntensity", 0.92f); SetPresetFloat("vhsTapeSpeed", 1f);
+                    SetPresetFloat("vhsHorizontalJitter", 2.6f); SetPresetFloat("vhsLineWobble", 4.2f);
+                    SetPresetFloat("vhsTracking", 0.38f); SetPresetFloat("vhsTrackingSpeed", 0.85f); SetPresetFloat("vhsTrackingWidth", 0.075f);
+                    SetPresetFloat("vhsChromaBleed", 5.5f); SetPresetFloat("vhsChromaBlur", 6.5f); SetPresetFloat("vhsColorLoss", 0.36f);
+                    SetPresetFloat("vhsLumaNoise", 0.09f); SetPresetFloat("vhsChromaNoise", 0.045f); SetPresetFloat("vhsDropout", 0.36f);
+                    SetPresetFloat("vhsHeadSwitching", 0.34f); SetPresetFloat("vhsHeadSwitchHeight", 0.055f); SetPresetFloat("vhsInterlace", 0.18f);
+                    SetPresetEnum("vhsTapeMode", (int)CrowImageEffects.VhsTapeMode.LP); SetPresetInt("vhsGeneration", 3); SetPresetFloat("vhsAgcInstability", 0.18f); SetPresetFloat("vhsVerticalChromaBlur", 1.7f);
+                    break;
+                case VhsPreset.DamagedEp:
+                    SetPresetFloat("vhsIntensity", 1f); SetPresetFloat("vhsTapeSpeed", 0.9f);
+                    SetPresetFloat("vhsHorizontalJitter", 5.2f); SetPresetFloat("vhsLineWobble", 8f);
+                    SetPresetFloat("vhsTracking", 0.72f); SetPresetFloat("vhsTrackingSpeed", 1.25f); SetPresetFloat("vhsTrackingWidth", 0.13f);
+                    SetPresetFloat("vhsChromaBleed", 8.5f); SetPresetFloat("vhsChromaBlur", 10f); SetPresetFloat("vhsColorLoss", 0.58f);
+                    SetPresetFloat("vhsLumaNoise", 0.17f); SetPresetFloat("vhsChromaNoise", 0.11f); SetPresetFloat("vhsDropout", 0.78f);
+                    SetPresetFloat("vhsHeadSwitching", 0.68f); SetPresetFloat("vhsHeadSwitchHeight", 0.085f); SetPresetFloat("vhsInterlace", 0.32f);
+                    SetPresetEnum("vhsTapeMode", (int)CrowImageEffects.VhsTapeMode.EP); SetPresetInt("vhsGeneration", 6); SetPresetFloat("vhsAgcInstability", 0.38f); SetPresetFloat("vhsVerticalChromaBlur", 2.8f);
+                    break;
+            }
+        }
+
+        private void ApplyJitterPreset(JitterPreset preset)
+        {
+            SetPresetBool("jitterEnabled", true);
+            SetJitterPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetJitterPresetValues(JitterPreset preset)
+        {
+            // Establish every non-resource jitter value so presets remain deterministic.
+            SetPresetBool("jitterUseSeed", true); SetPresetInt("jitterSeed", 1337); SetPresetBool("jitterClampUV", true);
+            SetPresetObject("jitterNoiseTex", null);
+            SetPresetVector3("jitterChannelWeights", Vector3.one);
+            SetPresetVector2("jitterDirR", new Vector2(1f, 0f)); SetPresetVector2("jitterDirG", new Vector2(0f, 1f)); SetPresetVector2("jitterDirB", new Vector2(-1f, -1f));
+            SetPresetInt("jitterHashCellCount", 256); SetPresetFloat("jitterHashTimeSmooth", 0f); SetPresetFloat("jitterHashRotateDeg", 0f);
+            SetPresetVector2("jitterHashAniso", Vector2.one); SetPresetFloat("jitterHashWarpAmpPx", 0f); SetPresetInt("jitterHashWarpCells", 64);
+            SetPresetFloat("jitterHashWarpSpeed", 6f); SetPresetBool("jitterHashPerChannel", false);
+
+            switch (preset)
+            {
+                case JitterPreset.SubtleRgb:
+                    SetPresetFloat("jitterStrength", 0.22f); SetPresetEnum("jitterMode", (int)CrowImageEffects.JitterMode.TimeSine);
+                    SetPresetFloat("jitterAmountPx", 0.65f); SetPresetFloat("jitterSpeed", 3.5f);
+                    SetPresetBool("jitterScanline", false); SetPresetFloat("jitterScanlineDensity", 480f); SetPresetFloat("jitterScanlineAmp", 0.15f);
+                    SetPresetVector3("jitterChannelWeights", new Vector3(1f, 0.35f, 0.85f));
+                    SetPresetVector2("jitterDirR", new Vector2(1f, 0f)); SetPresetVector2("jitterDirG", Vector2.zero); SetPresetVector2("jitterDirB", new Vector2(-1f, 0f));
+                    break;
+                case JitterPreset.VhsDrift:
+                    SetPresetFloat("jitterStrength", 0.42f); SetPresetEnum("jitterMode", (int)CrowImageEffects.JitterMode.TimeSine);
+                    SetPresetFloat("jitterAmountPx", 1.7f); SetPresetFloat("jitterSpeed", 7f);
+                    SetPresetBool("jitterScanline", true); SetPresetFloat("jitterScanlineDensity", 480f); SetPresetFloat("jitterScanlineAmp", 0.65f);
+                    SetPresetVector3("jitterChannelWeights", new Vector3(0.8f, 0.35f, 1f));
+                    SetPresetVector2("jitterDirR", new Vector2(1f, 0f)); SetPresetVector2("jitterDirG", new Vector2(0.2f, 0f)); SetPresetVector2("jitterDirB", new Vector2(-1f, 0f));
+                    break;
+                case JitterPreset.DigitalShake:
+                    SetPresetFloat("jitterStrength", 0.62f); SetPresetEnum("jitterMode", (int)CrowImageEffects.JitterMode.Static);
+                    SetPresetFloat("jitterAmountPx", 2.5f); SetPresetFloat("jitterSpeed", 0f);
+                    SetPresetBool("jitterScanline", false); SetPresetFloat("jitterScanlineDensity", 720f); SetPresetFloat("jitterScanlineAmp", 0f);
+                    SetPresetVector3("jitterChannelWeights", new Vector3(1f, 0.75f, 1f));
+                    SetPresetVector2("jitterDirR", new Vector2(1f, 1f)); SetPresetVector2("jitterDirG", new Vector2(-1f, 0f)); SetPresetVector2("jitterDirB", new Vector2(0f, -1f));
+                    break;
+                case JitterPreset.GlitchHash:
+                    SetPresetFloat("jitterStrength", 0.72f); SetPresetEnum("jitterMode", (int)CrowImageEffects.JitterMode.HashNoise);
+                    SetPresetFloat("jitterAmountPx", 3.2f); SetPresetFloat("jitterSpeed", 12f);
+                    SetPresetBool("jitterScanline", true); SetPresetFloat("jitterScanlineDensity", 360f); SetPresetFloat("jitterScanlineAmp", 1.1f);
+                    SetPresetInt("jitterHashCellCount", 192); SetPresetFloat("jitterHashTimeSmooth", 0.18f); SetPresetFloat("jitterHashRotateDeg", 7f);
+                    SetPresetVector2("jitterHashAniso", new Vector2(3.5f, 0.45f)); SetPresetFloat("jitterHashWarpAmpPx", 2.8f);
+                    SetPresetInt("jitterHashWarpCells", 48); SetPresetFloat("jitterHashWarpSpeed", 14f); SetPresetBool("jitterHashPerChannel", true);
+                    break;
+            }
+        }
+
+        private void ApplyBleedPreset(BleedPreset preset)
+        {
+            SetBleedPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetBleedPresetValues(BleedPreset preset)
+        {
+            SetPresetEnum("bleedBlendMode", (int)CrowImageEffects.BleedBlendMode.Mix);
+            SetPresetVector2("shiftR", new Vector2(-0.5f, 0f)); SetPresetVector2("shiftG", Vector2.zero); SetPresetVector2("shiftB", new Vector2(0.5f, 0f));
+            SetPresetBool("bleedEdgeOnly", false); SetPresetFloat("bleedEdgeThreshold", 0.05f); SetPresetFloat("bleedEdgePower", 2f);
+            SetPresetVector2("bleedRadialCenter", new Vector2(0.5f, 0.5f)); SetPresetFloat("bleedRadialStrength", 1f);
+            SetPresetInt("bleedSamples", 1); SetPresetFloat("bleedSmear", 0f); SetPresetFloat("bleedFalloff", 2f);
+            SetPresetFloat("bleedIntensityR", 1f); SetPresetFloat("bleedIntensityG", 1f); SetPresetFloat("bleedIntensityB", 1f);
+            SetPresetVector2("bleedAnamorphic", Vector2.one); SetPresetBool("bleedClampUV", true); SetPresetBool("bleedPreserveLuma", false);
+            SetPresetFloat("bleedWobbleAmp", 0f); SetPresetFloat("bleedWobbleFreq", 4f); SetPresetBool("bleedWobbleScanline", false);
+
+            switch (preset)
+            {
+                case BleedPreset.SoftLens:
+                    SetPresetFloat("bleedBlend", 0.28f); SetPresetFloat("bleedIntensity", 0.8f); SetPresetEnum("bleedMode", (int)CrowImageEffects.BleedMode.Manual);
+                    SetPresetVector2("shiftR", new Vector2(-0.6f, 0f)); SetPresetVector2("shiftB", new Vector2(0.6f, 0f)); SetPresetBool("bleedPreserveLuma", true);
+                    break;
+                case BleedPreset.VhsChroma:
+                    SetPresetFloat("bleedBlend", 0.46f); SetPresetFloat("bleedIntensity", 1.8f); SetPresetEnum("bleedMode", (int)CrowImageEffects.BleedMode.Manual);
+                    SetPresetVector2("shiftR", new Vector2(-1.2f, 0f)); SetPresetVector2("shiftG", new Vector2(0.2f, 0f)); SetPresetVector2("shiftB", new Vector2(1.5f, 0f));
+                    SetPresetInt("bleedSamples", 5); SetPresetFloat("bleedSmear", 2.8f); SetPresetFloat("bleedFalloff", 1.4f);
+                    SetPresetVector2("bleedAnamorphic", new Vector2(1.8f, 0.35f)); SetPresetFloat("bleedWobbleAmp", 0.2f); SetPresetFloat("bleedWobbleFreq", 5f); SetPresetBool("bleedWobbleScanline", true);
+                    break;
+                case BleedPreset.RadialFringe:
+                    SetPresetFloat("bleedBlend", 0.38f); SetPresetFloat("bleedIntensity", 2.4f); SetPresetEnum("bleedMode", (int)CrowImageEffects.BleedMode.Radial);
+                    SetPresetFloat("bleedRadialStrength", 1.5f); SetPresetBool("bleedEdgeOnly", true); SetPresetFloat("bleedEdgeThreshold", 0.035f); SetPresetFloat("bleedEdgePower", 1.5f);
+                    SetPresetFloat("bleedIntensityG", 0.25f); SetPresetBool("bleedPreserveLuma", true);
+                    break;
+                case BleedPreset.NeonSmear:
+                    SetPresetFloat("bleedBlend", 0.72f); SetPresetFloat("bleedIntensity", 3.4f); SetPresetEnum("bleedMode", (int)CrowImageEffects.BleedMode.Manual);
+                    SetPresetEnum("bleedBlendMode", (int)CrowImageEffects.BleedBlendMode.Screen);
+                    SetPresetVector2("shiftR", new Vector2(-1.5f, 0.2f)); SetPresetVector2("shiftG", new Vector2(0.4f, -0.1f)); SetPresetVector2("shiftB", new Vector2(1.8f, 0.1f));
+                    SetPresetInt("bleedSamples", 7); SetPresetFloat("bleedSmear", 4.2f); SetPresetFloat("bleedFalloff", 1f);
+                    SetPresetFloat("bleedIntensityR", 1.25f); SetPresetFloat("bleedIntensityG", 0.65f); SetPresetFloat("bleedIntensityB", 1.35f);
+                    SetPresetVector2("bleedAnamorphic", new Vector2(2.3f, 0.4f)); SetPresetFloat("bleedWobbleAmp", 0.35f); SetPresetFloat("bleedWobbleFreq", 8f);
+                    break;
+            }
+        }
+
+        private void ApplyGhostPreset(GhostPreset preset)
+        {
+            SetPresetBool("ghostEnabled", true);
+            SetGhostPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetGhostPresetValues(GhostPreset preset)
+        {
+            SetPresetFloat("ghostResolutionScale", 0.5f); SetPresetFloat("ghostFrameIntervalMs", 33.333f); SetPresetFloat("ghostDecayMs", 180f);
+            switch (preset)
+            {
+                case GhostPreset.Persistence:
+                    SetPresetFloat("ghostBlend", 0.10f); SetPresetVector2("ghostOffsetPx", Vector2.zero); SetPresetInt("ghostFrames", 3);
+                    SetPresetInt("ghostCaptureInterval", 0); SetPresetInt("ghostStartDelay", 0); SetPresetFloat("ghostWeightCurve", 2.4f); SetPresetEnum("ghostCombineMode", (int)CrowImageEffects.GhostCombineMode.Screen);
+                    SetPresetFloat("ghostFrameIntervalMs", 16.667f); SetPresetFloat("ghostDecayMs", 95f);
+                    break;
+                case GhostPreset.LcdSmear:
+                    SetPresetFloat("ghostBlend", 0.18f); SetPresetVector2("ghostOffsetPx", new Vector2(1.25f, 0f)); SetPresetInt("ghostFrames", 5);
+                    SetPresetInt("ghostCaptureInterval", 0); SetPresetInt("ghostStartDelay", 0); SetPresetFloat("ghostWeightCurve", 1.8f); SetPresetEnum("ghostCombineMode", (int)CrowImageEffects.GhostCombineMode.Mix);
+                    SetPresetFloat("ghostFrameIntervalMs", 16.667f); SetPresetFloat("ghostDecayMs", 145f);
+                    break;
+                case GhostPreset.DreamTrail:
+                    SetPresetFloat("ghostBlend", 0.28f); SetPresetVector2("ghostOffsetPx", new Vector2(2.4f, 1.2f)); SetPresetInt("ghostFrames", 8);
+                    SetPresetInt("ghostCaptureInterval", 1); SetPresetInt("ghostStartDelay", 0); SetPresetFloat("ghostWeightCurve", 1.15f); SetPresetEnum("ghostCombineMode", (int)CrowImageEffects.GhostCombineMode.Screen);
+                    SetPresetFloat("ghostResolutionScale", 0.75f); SetPresetFloat("ghostFrameIntervalMs", 50f); SetPresetFloat("ghostDecayMs", 520f);
+                    break;
+                case GhostPreset.SecurityCam:
+                    SetPresetFloat("ghostBlend", 0.20f); SetPresetVector2("ghostOffsetPx", new Vector2(-1.5f, 0f)); SetPresetInt("ghostFrames", 5);
+                    SetPresetInt("ghostCaptureInterval", 2); SetPresetInt("ghostStartDelay", 1); SetPresetFloat("ghostWeightCurve", 2.8f); SetPresetEnum("ghostCombineMode", (int)CrowImageEffects.GhostCombineMode.Max);
+                    SetPresetFloat("ghostResolutionScale", 0.5f); SetPresetFloat("ghostFrameIntervalMs", 100f); SetPresetFloat("ghostDecayMs", 310f);
+                    break;
+            }
+        }
+
+        private void ApplyUnsharpPreset(UnsharpPreset preset)
+        {
+            SetPresetBool("unsharpEnabled", true);
+            SetUnsharpPresetValues(preset);
+            ApplySerializedChanges();
+        }
+
+        private void SetUnsharpPresetValues(UnsharpPreset preset)
+        {
+            SetPresetEnum("sharpenMode", (int)CrowImageEffects.SharpenMode.ContrastAdaptive);
+            switch (preset)
+            {
+                case UnsharpPreset.SoftDetail:
+                    SetPresetFloat("unsharpAmount", 0.35f); SetPresetFloat("unsharpRadius", 1.4f); SetPresetFloat("unsharpThreshold", 0.025f); SetPresetBool("unsharpLumaOnly", true); SetPresetFloat("unsharpChroma", 0.05f);
+                    break;
+                case UnsharpPreset.CrispPixel:
+                    SetPresetFloat("unsharpAmount", 0.85f); SetPresetFloat("unsharpRadius", 0.55f); SetPresetFloat("unsharpThreshold", 0.005f); SetPresetBool("unsharpLumaOnly", false); SetPresetFloat("unsharpChroma", 0.25f);
+                    break;
+                case UnsharpPreset.LumaClean:
+                    SetPresetFloat("unsharpAmount", 0.70f); SetPresetFloat("unsharpRadius", 1f); SetPresetFloat("unsharpThreshold", 0.045f); SetPresetBool("unsharpLumaOnly", true); SetPresetFloat("unsharpChroma", 0f);
+                    break;
+                case UnsharpPreset.Aggressive:
+                    SetPresetFloat("unsharpAmount", 1.65f); SetPresetFloat("unsharpRadius", 0.75f); SetPresetFloat("unsharpThreshold", 0.008f); SetPresetBool("unsharpLumaOnly", false); SetPresetFloat("unsharpChroma", 0.65f);
+                    SetPresetEnum("sharpenMode", (int)CrowImageEffects.SharpenMode.UnsharpMask);
+                    break;
+            }
+        }
+
+        private void ConfirmAndApplyFullStackPreset(FullStackPreset preset, string displayName)
+        {
+            bool confirmed = EditorUtility.DisplayDialog(
+                "Apply CrowFX Look",
+                $"Apply \"{displayName}\" at {_fullPresetAmount * 100f:0}% amount?\n\nThis replaces every CrowFX effect setting and clears effect texture assignments such as palettes, masks, and noise textures. Profile links and shader overrides are preserved.\n\nThe operation can be undone.",
+                "Apply Look", "Cancel");
+
+            if (!confirmed) return;
+            RestoreFullStackPresetPreviewIfNeeded();
+            ApplyFullStackPreset(preset, displayName);
+        }
+
+        private void ApplyFullStackPreset(FullStackPreset preset, string displayName, bool previewOnly = false)
+        {
+            var targetFx = (CrowImageEffects)target;
+            if (targetFx == null) return;
+
+            if (previewOnly)
+                RestoreSectionPreviewStatesIfNeeded();
+            else
+            {
+                RestorePreviewStatesIfNeeded();
+                Undo.RecordObject(targetFx, $"Apply {displayName} Preset");
+            }
+
+            var tmpGO = new GameObject("CrowImageEffects_FullPresetDefaults__TEMP") { hideFlags = HideFlags.HideAndDontSave };
+            try
+            {
+                var defaults = tmpGO.AddComponent<CrowImageEffects>();
+                var source = new SerializedObject(defaults);
+                source.Update();
+
+                var copied = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var section in _propsBySection)
+                {
+                    if (section.Key == SectionKeys.Shaders) continue;
+                    var names = section.Value;
+                    if (names == null) continue;
+
+                    for (int i = 0; i < names.Count; i++)
+                    {
+                        string name = names[i];
+                        if (name == "profile" || name == "autoApplyProfile" || !copied.Add(name)) continue;
+                        CopyPropertyValue(serializedObject.FindProperty(name), source.FindProperty(name));
+                    }
+                }
+
+                SetPresetFloat("masterBlend", 1f);
+                switch (preset)
+                {
+                    case FullStackPreset.CleanRetro:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.03f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.03f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None); SetPresetFloat("ditherStrength", 0f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail); SetPresetFloat("unsharpAmount", 0.22f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm);
+                        SetPresetFloat("crtScanlineStrength", 0.28f); SetPresetFloat("crtMaskStrength", 0.05f); SetPresetFloat("crtBloom", 0.05f);
+                        SetPresetFloat("crtCurvature", 0.01f); SetPresetFloat("crtVignette", 0.06f); SetPresetFloat("crtNoise", 0.001f); SetPresetFloat("crtBrightness", 1.08f);
+                        break;
+
+                    case FullStackPreset.CleanDigital:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.025f); SetPresetFloat("gamma", 0.995f); SetPresetFloat("saturation", 1.015f);
+                        SetPresetInt("levels", 512); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.24f); SetPresetFloat("unsharpThreshold", 0.055f);
+                        break;
+
+                    case FullStackPreset.SoftCinematic:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 0.985f); SetPresetFloat("saturation", 0.96f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.96f, 0.90f, 1f)); SetPresetFloat("pregradeTintStrength", 0.12f);
+                        SetPresetInt("levels", 256); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail);
+                        SetPresetFloat("unsharpAmount", 0.18f); SetPresetFloat("unsharpRadius", 1.6f); SetPresetFloat("unsharpThreshold", 0.035f);
+                        break;
+
+                    case FullStackPreset.SharpGameplay:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(960, 540));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.055f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 1.06f);
+                        SetPresetInt("levels", 256); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.46f); SetPresetFloat("unsharpThreshold", 0.018f);
+                        break;
+
+                    case FullStackPreset.MutedDocumentary:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.02f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 1.035f); SetPresetFloat("saturation", 0.62f);
+                        SetPresetInt("levels", 192); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.025f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.28f);
+                        break;
+
+                    case FullStackPreset.RetroConsole:
+                        SetPresetInt("pixelSize", 1); SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(320, 240));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.05f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.06f);
+                        SetPresetInt("levels", 128); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.12f);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.10f); SetPresetFloat("bleedIntensity", 0.42f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.52f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv);
+                        SetPresetFloat("crtScanlineStrength", 0.48f); SetPresetFloat("crtMaskStrength", 0.13f); SetPresetFloat("crtBloom", 0.13f);
+                        SetPresetFloat("crtVignette", 0.20f); SetPresetFloat("crtNoise", 0.003f); SetPresetFloat("crtFlicker", 0.003f); SetPresetFloat("crtBrightness", 1.12f);
+                        break;
+
+                    case FullStackPreset.RetroHandheld:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(160, 144));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 0.68f);
+                        SetPresetInt("levels", 16); SetPresetBool("luminanceOnly", true);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.30f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.07f); SetPresetInt("ghostFrames", 2); SetPresetVector2("ghostOffsetPx", new Vector2(0.5f, 0f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.42f);
+                        break;
+
+                    case FullStackPreset.SoftConsumerCrt:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.025f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 1.02f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.07f); SetPresetFloat("bleedIntensity", 0.35f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv);
+                        SetPresetFloat("crtCurvature", 0.055f); SetPresetFloat("crtOverscan", 1.02f); SetPresetFloat("crtScanlineStrength", 0.38f);
+                        SetPresetFloat("crtMaskStrength", 0.08f); SetPresetFloat("crtBloom", 0.12f); SetPresetFloat("crtVignette", 0.16f);
+                        SetPresetFloat("crtNoise", 0.004f); SetPresetFloat("crtFlicker", 0.003f); SetPresetFloat("crtBrightness", 1.08f);
+                        break;
+
+                    case FullStackPreset.ArcadeCabinet:
+                        SetPresetInt("pixelSize", 1); SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(384, 288));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.04f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.10f);
+                        SetPresetInt("levels", 160); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.08f);
+                        SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.14f); SetPresetFloat("bleedIntensity", 1.1f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.58f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Arcade);
+                        SetPresetFloat("crtScanlineStrength", 0.58f); SetPresetFloat("crtMaskStrength", 0.20f); SetPresetFloat("crtBloom", 0.22f);
+                        SetPresetFloat("crtVignette", 0.23f); SetPresetFloat("crtNoise", 0.003f); SetPresetFloat("crtFlicker", 0.003f); SetPresetFloat("crtBrightness", 1.13f);
+                        break;
+
+                    case FullStackPreset.BroadcastPvm:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.06f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 1.04f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.38f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm);
+                        SetPresetFloat("crtScanlineStrength", 0.58f); SetPresetFloat("crtMaskStrength", 0.08f); SetPresetFloat("crtBloom", 0.07f);
+                        SetPresetFloat("crtVignette", 0.08f); SetPresetFloat("crtNoise", 0.001f); SetPresetFloat("crtFlicker", 0.001f); SetPresetFloat("crtBrightness", 1.18f);
+                        break;
+
+                    case FullStackPreset.GreenTerminal:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 400));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.05f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 1.03f); SetPresetFloat("saturation", 0f);
+                        SetPresetColor("pregradeTint", new Color(0.30f, 1f, 0.20f, 1f)); SetPresetFloat("pregradeTintStrength", 0.90f);
+                        SetPresetInt("levels", 24); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.08f);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.06f); SetPresetFloat("bleedIntensity", 0.28f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.PcMonitor); SetPresetFloat("crtScanlineStrength", 0.52f); SetPresetFloat("crtMaskStrength", 0.08f); SetPresetFloat("crtBloom", 0.12f); SetPresetFloat("crtVignette", 0.18f); SetPresetFloat("crtBrightness", 1.15f);
+                        break;
+
+                    case FullStackPreset.AmberTerminal:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(720, 400));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.04f); SetPresetFloat("contrast", 1.09f); SetPresetFloat("gamma", 1.02f); SetPresetFloat("saturation", 0f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.58f, 0.12f, 1f)); SetPresetFloat("pregradeTintStrength", 0.88f);
+                        SetPresetInt("levels", 32); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.07f); SetPresetFloat("bleedIntensity", 0.30f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.PcMonitor); SetPresetFloat("crtScanlineStrength", 0.46f); SetPresetFloat("crtMaskStrength", 0.05f); SetPresetFloat("crtBloom", 0.16f); SetPresetFloat("crtVignette", 0.20f); SetPresetFloat("crtBrightness", 1.12f);
+                        break;
+
+                    case FullStackPreset.PixelDither:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(320, 180));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.07f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.06f);
+                        SetPresetInt("levels", 40); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 32); SetPresetInt("levelsG", 48); SetPresetInt("levelsB", 28);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.38f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.DigitalShake); SetPresetFloat("jitterStrength", 0.035f); SetPresetFloat("jitterAmountPx", 0.5f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.58f);
+                        break;
+
+                    case FullStackPreset.PocketRpg:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(240, 160));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 0.82f);
+                        SetPresetInt("levels", 24); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.24f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.055f); SetPresetInt("ghostFrames", 2);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.48f);
+                        break;
+
+                    case FullStackPreset.MonochromeHandheld:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(160, 144));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0f);
+                        SetPresetInt("levels", 6); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.42f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.11f); SetPresetInt("ghostFrames", 3);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.40f);
+                        break;
+
+                    case FullStackPreset.GraphicNovel:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.01f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.08f);
+                        SetPresetInt("levels", 18); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 18); SetPresetInt("levelsG", 22); SetPresetInt("levelsB", 14);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Halftone); SetPresetFloat("ditherStrength", 0.42f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.35f); SetPresetFloat("edgeThreshold", 0.025f); SetPresetFloat("edgeBlend", 0.52f); SetPresetColor("edgeColor", new Color(0.025f, 0.035f, 0.08f, 1f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.38f);
+                        break;
+
+                    case FullStackPreset.PosterizedNoir:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.07f); SetPresetFloat("contrast", 1.16f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0f);
+                        SetPresetInt("levels", 9); SetPresetBool("luminanceOnly", true);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Diamond); SetPresetFloat("ditherStrength", 0.18f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.15f); SetPresetFloat("edgeThreshold", 0.035f); SetPresetFloat("edgeBlend", 0.38f); SetPresetColor("edgeColor", Color.black);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.52f);
+                        break;
+
+                    case FullStackPreset.NewspaperHalftone:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.12f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 0.52f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.93f, 0.76f, 1f)); SetPresetFloat("pregradeTintStrength", 0.18f);
+                        SetPresetInt("levels", 10); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 9); SetPresetInt("levelsG", 11); SetPresetInt("levelsB", 7); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Halftone); SetPresetFloat("ditherStrength", 0.85f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.72f); SetPresetFloat("edgeThreshold", 0.05f); SetPresetFloat("edgeBlend", 0.20f); SetPresetColor("edgeColor", new Color(0.08f, 0.055f, 0.035f, 1f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.30f);
+                        break;
+
+                    case FullStackPreset.MangaInk:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.035f); SetPresetFloat("contrast", 1.18f); SetPresetFloat("gamma", 0.96f); SetPresetFloat("saturation", 0f);
+                        SetPresetInt("levels", 6); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Linear); SetPresetFloat("ditherStrength", 0.75f); SetPresetFloat("ditherAngle", 28f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 2.15f); SetPresetFloat("edgeThreshold", 0.018f); SetPresetFloat("edgeBlend", 0.70f); SetPresetColor("edgeColor", Color.black);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.38f);
+                        break;
+
+                    case FullStackPreset.TwoToneComic:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.24f);
+                        SetPresetInt("levels", 6); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 5); SetPresetInt("levelsG", 7); SetPresetInt("levelsB", 4); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Halftone); SetPresetFloat("ditherStrength", 0.62f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.30f); SetPresetFloat("edgeThreshold", 0.028f); SetPresetFloat("edgeBlend", 0.48f); SetPresetColor("edgeColor", new Color(0.08f, 0.015f, 0.06f, 1f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.40f);
+                        break;
+
+                    case FullStackPreset.DigitalGlitch:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.12f);
+                        SetPresetInt("levels", 64); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 48); SetPresetInt("levelsG", 72); SetPresetInt("levelsB", 40);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.09f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.28f); SetPresetFloat("jitterAmountPx", 1.8f);
+                        SetBleedPresetValues(BleedPreset.NeonSmear); SetPresetFloat("bleedBlend", 0.20f); SetPresetFloat("bleedIntensity", 1.7f); SetPresetInt("bleedSamples", 4); SetPresetFloat("bleedSmear", 1.6f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.06f); SetPresetInt("ghostFrames", 2);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.Aggressive); SetPresetFloat("unsharpAmount", 0.45f);
+                        break;
+
+                    case FullStackPreset.ChromaticDream:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.01f); SetPresetFloat("contrast", 1.025f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 0.10f);
+                        SetPresetInt("levels", 20); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Linear); SetPresetFloat("ditherStrength", 0.16f); SetPresetFloat("ditherAngle", 32f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.90f); SetPresetFloat("edgeThreshold", 0.03f); SetPresetFloat("edgeBlend", 0.40f); SetPresetColor("edgeColor", new Color(0.035f, 0.04f, 0.055f, 1f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.18f);
+                        break;
+
+                    case FullStackPreset.NeonTrails:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.06f); SetPresetFloat("gamma", 0.985f); SetPresetFloat("saturation", 1.30f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.18f, 0.12f, 1f)); SetPresetFloat("pregradeTintStrength", 0.08f); SetPresetInt("levels", 512);
+                        SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.13f); SetPresetFloat("bleedIntensity", 0.80f); SetPresetFloat("bleedRadialStrength", 0.95f); SetPresetBool("bleedEdgeOnly", true);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.16f); SetPresetInt("ghostFrames", 4); SetPresetVector2("ghostOffsetPx", new Vector2(1.5f, 0.2f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail); SetPresetFloat("unsharpAmount", 0.16f);
+                        break;
+
+                    case FullStackPreset.PastelMemory:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 0.99f); SetPresetFloat("gamma", 0.985f); SetPresetFloat("saturation", 1.42f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.78f, 0.18f, 1f)); SetPresetFloat("pregradeTintStrength", 0.08f); SetPresetInt("levels", 48); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.18f);
+                        break;
+
+                    case FullStackPreset.MusicVideoGlow:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.01f); SetPresetFloat("contrast", 1.025f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.15f); SetPresetInt("levels", 512);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.20f);
+                        break;
+
+                    case FullStackPreset.FrozenEcho:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0f); SetPresetFloat("contrast", 1.01f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 1.02f); SetPresetInt("levels", 512);
+                        break;
+
+                    case FullStackPreset.LowFiLcd:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.01f); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 0.94f);
+                        SetPresetInt("levels", 96); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.07f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.DigitalShake); SetPresetFloat("jitterStrength", 0.025f); SetPresetFloat("jitterAmountPx", 0.35f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.15f); SetPresetInt("ghostFrames", 4); SetPresetVector2("ghostOffsetPx", new Vector2(0.8f, 0f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.30f);
+                        break;
+
+                    case FullStackPreset.SignalDesync:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(720, 405));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.08f); SetPresetFloat("saturation", 1.10f);
+                        SetPresetInt("levels", 96); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 64); SetPresetInt("levelsG", 112); SetPresetInt("levelsB", 56);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.DigitalShake); SetPresetFloat("jitterStrength", 0.18f); SetPresetFloat("jitterAmountPx", 1.4f); SetPresetFloat("jitterSpeed", 10f);
+                        SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.24f); SetPresetFloat("bleedIntensity", 1.5f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.045f); SetPresetInt("ghostFrames", 2);
+                        break;
+
+                    case FullStackPreset.BrokenLcd:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(480, 272));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.03f); SetPresetFloat("contrast", 1.14f); SetPresetFloat("gamma", 1.03f); SetPresetFloat("saturation", 0.82f);
+                        SetPresetInt("levels", 48); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.13f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.12f); SetPresetFloat("jitterAmountPx", 0.9f); SetPresetFloat("jitterHashWarpAmpPx", 1.2f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.23f); SetPresetInt("ghostFrames", 5); SetPresetVector2("ghostOffsetPx", new Vector2(1.2f, 0f));
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.55f); SetPresetFloat("edgeThreshold", 0.055f); SetPresetFloat("edgeBlend", 0.16f); SetPresetColor("edgeColor", new Color(0.1f, 0.45f, 0.38f, 1f));
+                        break;
+
+                    case FullStackPreset.CompressionPop:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(426, 240));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.12f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.22f);
+                        SetPresetInt("levels", 32); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 28); SetPresetInt("levelsG", 40); SetPresetInt("levelsB", 22);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.065f);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.09f); SetPresetFloat("bleedIntensity", 0.75f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.Aggressive); SetPresetFloat("unsharpAmount", 0.42f); SetPresetFloat("unsharpThreshold", 0.025f);
+                        break;
+
+                    case FullStackPreset.CleanVhs:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 0.99f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 0.96f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.CleanSp);
+                        SetPresetFloat("vhsIntensity", 0.38f); SetPresetFloat("vhsLumaNoise", 0.010f); SetPresetFloat("vhsChromaNoise", 0.004f);
+                        SetPresetFloat("vhsDropout", 0.012f); SetPresetFloat("vhsTracking", 0.012f); SetPresetFloat("vhsHeadSwitching", 0.025f);
+                        break;
+
+                    case FullStackPreset.RentalVhs:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.035f); SetPresetFloat("contrast", 0.98f); SetPresetFloat("gamma", 1.025f); SetPresetFloat("saturation", 0.91f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None); SetPresetFloat("ditherStrength", 0f);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.RentalCopy);
+                        SetPresetFloat("vhsIntensity", 0.62f); SetPresetFloat("vhsHorizontalJitter", 1.55f); SetPresetFloat("vhsLineWobble", 2.6f);
+                        SetPresetFloat("vhsTracking", 0.18f); SetPresetFloat("vhsChromaBleed", 4f); SetPresetFloat("vhsChromaBlur", 5f);
+                        SetPresetFloat("vhsLumaNoise", 0.055f); SetPresetFloat("vhsChromaNoise", 0.025f); SetPresetFloat("vhsDropout", 0.18f); SetPresetFloat("vhsHeadSwitching", 0.20f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv);
+                        SetPresetFloat("crtCurvature", 0.04f); SetPresetFloat("crtScanlineStrength", 0.26f); SetPresetFloat("crtMaskStrength", 0.05f);
+                        SetPresetFloat("crtBloom", 0.07f); SetPresetFloat("crtVignette", 0.12f); SetPresetFloat("crtNoise", 0.002f); SetPresetFloat("crtFlicker", 0.002f); SetPresetFloat("crtBrightness", 1.05f);
+                        break;
+
+                    case FullStackPreset.Camcorder90s:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 0.97f); SetPresetFloat("gamma", 1.03f); SetPresetFloat("saturation", 0.86f);
+                        SetPresetInt("levels", 256); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.07f); SetPresetInt("ghostFrames", 2);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.Consumer);
+                        SetPresetFloat("vhsIntensity", 0.50f); SetPresetFloat("vhsHorizontalJitter", 0.75f); SetPresetFloat("vhsLineWobble", 1.3f);
+                        SetPresetFloat("vhsTracking", 0.06f); SetPresetFloat("vhsChromaBleed", 2.6f); SetPresetFloat("vhsChromaBlur", 3.4f);
+                        SetPresetFloat("vhsColorLoss", 0.12f); SetPresetFloat("vhsLumaNoise", 0.035f); SetPresetFloat("vhsChromaNoise", 0.015f);
+                        SetPresetFloat("vhsDropout", 0.045f); SetPresetFloat("vhsHeadSwitching", 0.10f);
+                        break;
+
+                    case FullStackPreset.HomeMovie:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.055f); SetPresetFloat("contrast", 0.92f); SetPresetFloat("gamma", 0.97f); SetPresetFloat("saturation", 0.80f);
+                        SetPresetInt("levels", 192); SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.05f); SetPresetInt("ghostFrames", 2);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.Consumer); SetPresetFloat("vhsIntensity", 0.44f); SetPresetFloat("vhsHorizontalJitter", 0.55f); SetPresetFloat("vhsLineWobble", 1.05f);
+                        SetPresetFloat("vhsTracking", 0.035f); SetPresetFloat("vhsChromaBleed", 2.2f); SetPresetFloat("vhsChromaBlur", 3f); SetPresetFloat("vhsColorLoss", 0.17f);
+                        SetPresetFloat("vhsLumaNoise", 0.026f); SetPresetFloat("vhsChromaNoise", 0.012f); SetPresetFloat("vhsDropout", 0.030f); SetPresetFloat("vhsHeadSwitching", 0.07f);
+                        break;
+
+                    case FullStackPreset.DamagedTape:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.06f); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0.68f);
+                        SetPresetInt("levels", 112); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.055f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.VhsDrift); SetPresetFloat("jitterStrength", 0.07f); SetPresetFloat("jitterAmountPx", 0.65f);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.DamagedEp); SetPresetFloat("vhsIntensity", 0.74f); SetPresetFloat("vhsHorizontalJitter", 3.2f); SetPresetFloat("vhsLineWobble", 5.2f);
+                        SetPresetFloat("vhsTracking", 0.48f); SetPresetFloat("vhsTrackingWidth", 0.09f); SetPresetFloat("vhsChromaBleed", 6f); SetPresetFloat("vhsChromaBlur", 7.5f);
+                        SetPresetFloat("vhsLumaNoise", 0.11f); SetPresetFloat("vhsChromaNoise", 0.06f); SetPresetFloat("vhsDropout", 0.52f); SetPresetFloat("vhsHeadSwitching", 0.46f);
+                        break;
+
+                    case FullStackPreset.SecurityMonitor:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.04f); SetPresetFloat("contrast", 1.12f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0.28f);
+                        SetPresetInt("levels", 128); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.05f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.SubtleRgb); SetPresetFloat("jitterStrength", 0.05f); SetPresetFloat("jitterAmountPx", 0.3f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.16f); SetPresetInt("ghostFrames", 3);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm);
+                        SetPresetFloat("crtScanlineStrength", 0.38f); SetPresetFloat("crtMaskStrength", 0.03f); SetPresetFloat("crtBloom", 0.04f);
+                        SetPresetFloat("crtVignette", 0.26f); SetPresetFloat("crtNoise", 0.008f); SetPresetFloat("crtFlicker", 0.004f); SetPresetFloat("crtBrightness", 1.09f);
+                        break;
+
+                    case FullStackPreset.BroadcastNews:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(720, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 1.04f);
+                        SetPresetInt("levels", 192); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.46f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm); SetPresetFloat("crtCurvature", 0.008f); SetPresetFloat("crtScanlineStrength", 0.20f); SetPresetFloat("crtMaskStrength", 0.025f); SetPresetFloat("crtBloom", 0.025f); SetPresetFloat("crtVignette", 0.035f); SetPresetFloat("crtBrightness", 1.05f);
+                        break;
+
+                    case FullStackPreset.CableAccess:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.025f); SetPresetFloat("contrast", 1.02f); SetPresetFloat("gamma", 1.025f); SetPresetFloat("saturation", 0.84f);
+                        SetPresetInt("levels", 128); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.035f);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.Consumer); SetPresetFloat("vhsIntensity", 0.34f); SetPresetFloat("vhsHorizontalJitter", 0.7f); SetPresetFloat("vhsLineWobble", 1.2f); SetPresetFloat("vhsTracking", 0.045f); SetPresetFloat("vhsLumaNoise", 0.024f); SetPresetFloat("vhsDropout", 0.025f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv); SetPresetFloat("crtScanlineStrength", 0.22f); SetPresetFloat("crtMaskStrength", 0.035f); SetPresetFloat("crtBloom", 0.045f); SetPresetFloat("crtVignette", 0.10f); SetPresetFloat("crtBrightness", 1.05f);
+                        break;
+
+                    case FullStackPreset.NightVision:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.045f); SetPresetFloat("contrast", 1.12f); SetPresetFloat("gamma", 0.94f); SetPresetFloat("saturation", 0f);
+                        SetPresetColor("pregradeTint", new Color(0.24f, 1f, 0.18f, 1f)); SetPresetFloat("pregradeTintStrength", 0.94f);
+                        SetPresetInt("levels", 20); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.075f);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.05f); SetPresetFloat("bleedIntensity", 0.3f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.09f); SetPresetInt("ghostFrames", 2);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm); SetPresetFloat("crtScanlineStrength", 0.18f); SetPresetFloat("crtMaskStrength", 0f); SetPresetFloat("crtNoise", 0.018f); SetPresetFloat("crtVignette", 0.42f); SetPresetFloat("crtBrightness", 1.08f);
+                        break;
+
+                    case FullStackPreset.ThermalScope:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(480, 270));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 0.78f);
+                        SetPresetColor("pregradeTint", new Color(0.62f, 0.76f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.20f);
+                        SetPresetInt("levels", 12); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 7); SetPresetInt("levelsG", 13); SetPresetInt("levelsB", 5); SetPresetBool("invert", true);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.10f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.2f); SetPresetFloat("edgeThreshold", 0.025f); SetPresetFloat("edgeBlend", 0.42f); SetPresetColor("edgeColor", new Color(1f, 0.22f, 0.02f, 1f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.32f);
+                        break;
+
+                    case FullStackPreset.AnalogHorror:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.12f); SetPresetFloat("contrast", 1.12f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0.78f);
+                        SetPresetInt("levels", 96); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.10f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.14f); SetPresetFloat("jitterAmountPx", 1.2f);
+                        SetBleedPresetValues(BleedPreset.NeonSmear); SetPresetFloat("bleedBlend", 0.16f); SetPresetFloat("bleedIntensity", 1.4f); SetPresetInt("bleedSamples", 4); SetPresetFloat("bleedSmear", 1.5f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.14f); SetPresetInt("ghostFrames", 5);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.Aggressive); SetPresetFloat("unsharpAmount", 0.58f);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.DamagedEp);
+                        SetPresetFloat("vhsIntensity", 0.68f); SetPresetFloat("vhsHorizontalJitter", 2.8f); SetPresetFloat("vhsLineWobble", 4.5f);
+                        SetPresetFloat("vhsTracking", 0.38f); SetPresetFloat("vhsChromaBleed", 5.5f); SetPresetFloat("vhsChromaBlur", 7f);
+                        SetPresetFloat("vhsLumaNoise", 0.09f); SetPresetFloat("vhsChromaNoise", 0.05f); SetPresetFloat("vhsDropout", 0.38f); SetPresetFloat("vhsHeadSwitching", 0.36f);
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv);
+                        SetPresetFloat("crtScanlineStrength", 0.34f); SetPresetFloat("crtMaskStrength", 0.06f); SetPresetFloat("crtBloom", 0.10f);
+                        SetPresetFloat("crtVignette", 0.40f); SetPresetFloat("crtNoise", 0.012f); SetPresetFloat("crtFlicker", 0.006f); SetPresetFloat("crtBrightness", 1.06f);
+                        break;
+
+                    case FullStackPreset.FoundFootage:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.09f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 1.07f); SetPresetFloat("saturation", 0.54f);
+                        SetPresetInt("levels", 72); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.09f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.10f); SetPresetInt("ghostFrames", 3);
+                        SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.RentalCopy); SetPresetFloat("vhsIntensity", 0.62f); SetPresetFloat("vhsHorizontalJitter", 2.1f); SetPresetFloat("vhsLineWobble", 3.5f); SetPresetFloat("vhsTracking", 0.28f); SetPresetFloat("vhsLumaNoise", 0.08f); SetPresetFloat("vhsChromaNoise", 0.035f); SetPresetFloat("vhsDropout", 0.26f); SetPresetFloat("vhsHeadSwitching", 0.28f);
+                        break;
+
+                    case FullStackPreset.HauntedMonitor:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 480));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.08f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 1.04f); SetPresetFloat("saturation", 0.38f);
+                        SetPresetInt("levels", 64); SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.VhsDrift); SetPresetFloat("jitterStrength", 0.10f); SetPresetFloat("jitterAmountPx", 0.8f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.27f); SetPresetInt("ghostFrames", 8); SetPresetVector2("ghostOffsetPx", new Vector2(-1.4f, 0.5f));
+                        SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.ConsumerTv); SetPresetFloat("crtScanlineStrength", 0.42f); SetPresetFloat("crtMaskStrength", 0.06f); SetPresetFloat("crtBloom", 0.13f); SetPresetFloat("crtNoise", 0.018f); SetPresetFloat("crtFlicker", 0.014f); SetPresetFloat("crtVignette", 0.46f); SetPresetFloat("crtBrightness", 1.04f);
+                        break;
+
+                    case FullStackPreset.EmergencySignal:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.025f); SetPresetFloat("contrast", 1.16f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 0.72f);
+                        SetPresetInt("levels", 18); SetPresetBool("animateLevels", true); SetPresetInt("minLevels", 12); SetPresetInt("maxLevels", 32); SetPresetFloat("speed", 2.2f); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Linear); SetPresetFloat("ditherStrength", 0.13f); SetPresetFloat("ditherAngle", 0f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.22f); SetPresetFloat("jitterAmountPx", 1.5f);
+                        SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.0f); SetPresetFloat("edgeThreshold", 0.03f); SetPresetFloat("edgeBlend", 0.30f); SetPresetColor("edgeColor", new Color(0.85f, 0.02f, 0.015f, 1f));
+                        break;
+
+                    case FullStackPreset.CorruptedMemory:
+                        SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(512, 288));
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.02f); SetPresetFloat("contrast", 1.09f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 1.06f);
+                        SetPresetInt("levels", 40); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 22); SetPresetInt("levelsG", 54); SetPresetInt("levelsB", 18); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.10f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.34f); SetPresetFloat("jitterAmountPx", 2.2f); SetPresetFloat("jitterHashWarpAmpPx", 3.5f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.18f); SetPresetInt("ghostFrames", 7); SetPresetInt("ghostCaptureInterval", 2);
+                        SetBleedPresetValues(BleedPreset.NeonSmear); SetPresetFloat("bleedBlend", 0.18f); SetPresetFloat("bleedIntensity", 1.8f); SetPresetFloat("bleedSmear", 1.7f);
+                        break;
+
+                    case FullStackPreset.PsychedelicFringe:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.035f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 0.94f); SetPresetFloat("saturation", 1.48f);
+                        SetPresetInt("levels", 72); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Diamond); SetPresetFloat("ditherStrength", 0.07f);
+                        SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.34f); SetPresetFloat("bleedIntensity", 2.2f); SetPresetFloat("bleedRadialStrength", 1.8f);
+                        SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.SubtleRgb); SetPresetFloat("jitterStrength", 0.09f); SetPresetFloat("jitterAmountPx", 0.7f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.12f); SetPresetInt("ghostFrames", 4);
+                        break;
+
+                    case FullStackPreset.BleachBypass:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.035f); SetPresetFloat("contrast", 1.18f); SetPresetFloat("gamma", 1.03f); SetPresetFloat("saturation", 0.24f);
+                        SetPresetInt("levels", 160); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.02f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.42f); SetPresetFloat("unsharpThreshold", 0.035f);
+                        break;
+
+                    case FullStackPreset.ColorPop:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("gamma", 0.97f); SetPresetFloat("saturation", 1.38f);
+                        SetPresetInt("levels", 40); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 36); SetPresetInt("levelsG", 52); SetPresetInt("levelsB", 30); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.08f);
+                        SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.075f); SetPresetFloat("bleedIntensity", 0.55f);
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.38f);
+                        break;
+
+                    case FullStackPreset.BlueMood:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.035f); SetPresetFloat("contrast", 0.97f); SetPresetFloat("gamma", 1.05f); SetPresetFloat("saturation", 0.60f);
+                        SetPresetColor("pregradeTint", new Color(0.60f, 0.78f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.34f);
+                        SetPresetInt("levels", 96); SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.06f); SetPresetFloat("bleedIntensity", 0.45f);
+                        SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.11f); SetPresetInt("ghostFrames", 4); SetPresetVector2("ghostOffsetPx", new Vector2(-0.5f, 0.2f));
+                        SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail); SetPresetFloat("unsharpAmount", 0.13f);
+                        break;
+
+                    case FullStackPreset.WarmNostalgia:
+                        SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 0.98f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 0.90f);
+                        SetPresetColor("pregradeTint", new Color(1f, 0.84f, 0.66f, 1f)); SetPresetFloat("pregradeTintStrength", 0.08f);
+                        SetPresetInt("levels", 512); SetPresetBool("usePerChannel", false); SetPresetBool("animateLevels", false);
+                        SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None); SetPresetFloat("ditherStrength", 0f);
+                        SetPresetFloat("bleedBlend", 0f); SetPresetFloat("bleedIntensity", 0f);
+                        SetPresetBool("vhsEnabled", false); SetPresetFloat("vhsIntensity", 0f);
+                        break;
+                }
+
+                ApplyExpandedFullStackPresetBase(preset);
+                EnrichPresetWithProfessionalStages(preset);
+                CalibrateFullStackPresetStrength();
+                SetPresetFloat("masterBlend", _fullPresetAmount);
+
+                serializedObject.ApplyModifiedProperties();
+                if (previewOnly)
+                {
+                    EditorUtility.SetDirty(targetFx);
+                    SceneView.RepaintAll();
+                }
+                else
+                {
+                    FinalizeCommittedTargetChange(targetFx);
+                }
+            }
+            finally
+            {
+                DestroyImmediate(tmpGO);
+            }
+        }
+
+        private void ApplyExpandedFullStackPresetBase(FullStackPreset preset)
+        {
+            switch (preset)
+            {
+                // Clean & production: deliberately conservative, task-specific finishing.
+                case FullStackPreset.NeutralEditorial:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.015f); SetPresetFloat("gamma", 0.995f); SetPresetFloat("saturation", 0.99f);
+                    SetPresetInt("levels", 512); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.18f); SetPresetFloat("unsharpThreshold", 0.06f);
+                    break;
+                case FullStackPreset.ProductShowcase:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.045f); SetPresetFloat("gamma", 0.985f); SetPresetFloat("saturation", 1.06f);
+                    SetPresetInt("levels", 512); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.32f); SetPresetFloat("unsharpThreshold", 0.045f);
+                    break;
+                case FullStackPreset.SoftPortrait:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 0.975f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 0.94f);
+                    SetPresetColor("pregradeTint", new Color(1f, 0.91f, 0.84f, 1f)); SetPresetFloat("pregradeTintStrength", 0.06f); SetPresetInt("levels", 512);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail); SetPresetFloat("unsharpAmount", 0.11f); SetPresetFloat("unsharpRadius", 1.8f);
+                    break;
+
+                // Pixel & handheld.
+                case FullStackPreset.DosVga:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(320, 200));
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.04f); SetPresetFloat("saturation", 1.04f); SetPresetInt("levels", 24);
+                    SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 8); SetPresetInt("levelsG", 12); SetPresetInt("levelsB", 8); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.20f);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.44f);
+                    break;
+                case FullStackPreset.EinkReader:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(800, 600));
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.035f); SetPresetFloat("contrast", 1.06f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 0f);
+                    SetPresetInt("levels", 12); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered4x4); SetPresetFloat("ditherStrength", 0.34f);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.12f); SetPresetInt("ghostFrames", 3);
+                    break;
+                case FullStackPreset.MicroconsoleLcd:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(480, 272));
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.045f); SetPresetFloat("saturation", 1.02f); SetPresetInt("levels", 64);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Ordered2x2); SetPresetFloat("ditherStrength", 0.12f);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.LcdSmear); SetPresetFloat("ghostBlend", 0.055f); SetPresetInt("ghostFrames", 2);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.CrispPixel); SetPresetFloat("unsharpAmount", 0.42f);
+                    break;
+
+                // CRT displays.
+                case FullStackPreset.ApertureGrilleHd:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(1280, 720));
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.035f); SetPresetFloat("saturation", 1.03f); SetPresetInt("levels", 256);
+                    SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.PcMonitor); SetPresetFloat("crtScanlineStrength", 0.32f); SetPresetFloat("crtMaskStrength", 0.18f); SetPresetFloat("crtBloom", 0.06f); SetPresetFloat("crtCurvature", 0.015f); SetPresetFloat("crtVignette", 0.05f); SetPresetFloat("crtBrightness", 1.06f);
+                    break;
+                case FullStackPreset.VectorDisplay:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(1024, 768));
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.025f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("saturation", 0f); SetPresetColor("pregradeTint", new Color(0.20f, 1f, 0.46f, 1f)); SetPresetFloat("pregradeTintStrength", 0.92f);
+                    SetPresetInt("levels", 48); SetPresetBool("luminanceOnly", true); SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.75f); SetPresetFloat("edgeThreshold", 0.035f); SetPresetFloat("edgeBlend", 0.24f); SetPresetColor("edgeColor", new Color(0.15f, 1f, 0.40f, 1f));
+                    SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.PcMonitor); SetPresetFloat("crtScanlineStrength", 0.16f); SetPresetFloat("crtMaskStrength", 0.02f); SetPresetFloat("crtBloom", 0.20f); SetPresetFloat("crtVignette", 0.14f);
+                    break;
+                case FullStackPreset.MonochromeLabScope:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 1.07f); SetPresetFloat("gamma", 1.015f); SetPresetFloat("saturation", 0f); SetPresetColor("pregradeTint", new Color(0.32f, 0.88f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.84f);
+                    SetPresetInt("levels", 64); SetPresetBool("luminanceOnly", true); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.30f);
+                    SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.Pvm); SetPresetFloat("crtScanlineStrength", 0.38f); SetPresetFloat("crtMaskStrength", 0.03f); SetPresetFloat("crtBloom", 0.10f); SetPresetFloat("crtVignette", 0.08f);
+                    break;
+
+                // VHS & tape.
+                case FullStackPreset.SvhsMaster:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 0.995f); SetPresetFloat("gamma", 1.005f); SetPresetFloat("saturation", 0.98f); SetPresetInt("levels", 256);
+                    SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.CleanSp); SetPresetFloat("vhsIntensity", 0.28f); SetPresetFloat("vhsChromaBleed", 0.8f); SetPresetFloat("vhsChromaBlur", 1.2f); SetPresetFloat("vhsLumaNoise", 0.006f); SetPresetFloat("vhsChromaNoise", 0.002f); SetPresetFloat("vhsDropout", 0.006f);
+                    break;
+                case FullStackPreset.EpLongPlay:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.035f); SetPresetFloat("contrast", 0.985f); SetPresetFloat("gamma", 1.025f); SetPresetFloat("saturation", 0.78f); SetPresetInt("levels", 128);
+                    SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.DamagedEp); SetPresetFloat("vhsIntensity", 0.62f); SetPresetFloat("vhsHorizontalJitter", 2.2f); SetPresetFloat("vhsLineWobble", 3.8f); SetPresetFloat("vhsTracking", 0.28f); SetPresetFloat("vhsChromaBleed", 5f); SetPresetFloat("vhsChromaBlur", 6.5f); SetPresetFloat("vhsDropout", 0.30f); SetPresetFloat("vhsHeadSwitching", 0.30f);
+                    break;
+                case FullStackPreset.PublicAccessDub:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.02f); SetPresetFloat("contrast", 1.01f); SetPresetFloat("gamma", 1.015f); SetPresetFloat("saturation", 0.88f); SetPresetInt("levels", 160);
+                    SetPresetBool("vhsEnabled", true); SetVhsPresetValues(VhsPreset.RentalCopy); SetPresetFloat("vhsIntensity", 0.50f); SetPresetFloat("vhsTracking", 0.10f); SetPresetFloat("vhsChromaBleed", 3.2f); SetPresetFloat("vhsChromaBlur", 4.4f); SetPresetFloat("vhsLumaNoise", 0.038f); SetPresetFloat("vhsDropout", 0.09f);
+                    break;
+
+                // Print & illustration.
+                case FullStackPreset.RisographDuotone:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 0.985f); SetPresetFloat("saturation", 0.58f); SetPresetColor("pregradeTint", new Color(1f, 0.35f, 0.62f, 1f)); SetPresetFloat("pregradeTintStrength", 0.20f);
+                    SetPresetInt("levels", 7); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 7); SetPresetInt("levelsG", 4); SetPresetInt("levelsB", 6); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Halftone); SetPresetFloat("ditherStrength", 0.56f); SetPresetFloat("ditherAngle", 18f);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.75f); SetPresetFloat("edgeThreshold", 0.04f); SetPresetFloat("edgeBlend", 0.22f); SetPresetColor("edgeColor", new Color(0.08f, 0.12f, 0.34f, 1f));
+                    break;
+                case FullStackPreset.PulpColor:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.10f); SetPresetFloat("saturation", 1.14f); SetPresetColor("pregradeTint", new Color(1f, 0.80f, 0.50f, 1f)); SetPresetFloat("pregradeTintStrength", 0.10f);
+                    SetPresetInt("levels", 10); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 10); SetPresetInt("levelsG", 8); SetPresetInt("levelsB", 6); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Halftone); SetPresetFloat("ditherStrength", 0.44f);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.0f); SetPresetFloat("edgeThreshold", 0.03f); SetPresetFloat("edgeBlend", 0.34f); SetPresetColor("edgeColor", new Color(0.16f, 0.07f, 0.025f, 1f));
+                    break;
+                case FullStackPreset.BlueprintLines:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.06f); SetPresetFloat("saturation", 0f); SetPresetColor("pregradeTint", new Color(0.18f, 0.58f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.88f);
+                    SetPresetInt("levels", 12); SetPresetBool("luminanceOnly", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Linear); SetPresetFloat("ditherStrength", 0.20f); SetPresetFloat("ditherAngle", 0f);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.30f); SetPresetFloat("edgeThreshold", 0.025f); SetPresetFloat("edgeBlend", 0.48f); SetPresetColor("edgeColor", new Color(0.78f, 0.94f, 1f, 1f));
+                    break;
+
+                // Digital & glitch.
+                case FullStackPreset.PacketLoss:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.04f); SetPresetFloat("saturation", 0.98f); SetPresetInt("levels", 96);
+                    SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.DigitalShake); SetPresetFloat("jitterStrength", 0.06f); SetPresetFloat("jitterAmountPx", 0.6f);
+                    break;
+                case FullStackPreset.DataBend:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(512, 288)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.07f); SetPresetFloat("saturation", 1.16f);
+                    SetPresetInt("levels", 48); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 32); SetPresetInt("levelsG", 64); SetPresetInt("levelsB", 24);
+                    SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.16f); SetPresetFloat("jitterAmountPx", 1.25f); SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.18f); SetPresetFloat("bleedIntensity", 1.25f);
+                    break;
+                case FullStackPreset.BufferCollapse:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(426, 240)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.05f); SetPresetFloat("gamma", 1.02f); SetPresetFloat("saturation", 0.82f); SetPresetInt("levels", 40);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.SecurityCam); SetPresetFloat("ghostBlend", 0.16f); SetPresetInt("ghostFrames", 5); SetPresetVector2("ghostOffsetPx", new Vector2(1.1f, 0f));
+                    break;
+
+                // Dream & music video.
+                case FullStackPreset.PrismMemory:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.02f); SetPresetFloat("contrast", 1.035f); SetPresetFloat("gamma", 0.99f); SetPresetFloat("saturation", 1.20f); SetPresetColor("pregradeTint", new Color(1f, 0.62f, 0.28f, 1f)); SetPresetFloat("pregradeTintStrength", 0.055f); SetPresetInt("levels", 96);
+                    break;
+                case FullStackPreset.InfraredDream:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.01f); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 0f); SetPresetInt("levels", 512); SetPresetBool("luminanceOnly", true);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.15f);
+                    break;
+                case FullStackPreset.AuroraFeedback:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.025f); SetPresetFloat("contrast", 1.025f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.40f); SetPresetColor("pregradeTint", new Color(0.90f, 0.24f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.12f); SetPresetInt("levels", 512);
+                    SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.15f); SetPresetFloat("bleedIntensity", 0.95f); SetPresetFloat("bleedRadialStrength", 1.05f); SetPresetBool("bleedEdgeOnly", true);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.DreamTrail); SetPresetFloat("ghostBlend", 0.12f); SetPresetInt("ghostFrames", 3); SetPresetVector2("ghostOffsetPx", new Vector2(0.75f, -0.4f));
+                    break;
+
+                // Surveillance & broadcast.
+                case FullStackPreset.BodycamEvidence:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(1280, 720)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 1.055f); SetPresetFloat("gamma", 1.015f); SetPresetFloat("saturation", 0.72f); SetPresetInt("levels", 160);
+                    SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.DigitalShake); SetPresetFloat("jitterStrength", 0.025f); SetPresetFloat("jitterAmountPx", 0.25f); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.26f);
+                    break;
+                case FullStackPreset.DroneTelemetry:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(960, 540)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.045f); SetPresetFloat("gamma", 1.01f); SetPresetFloat("saturation", 0.62f); SetPresetColor("pregradeTint", new Color(0.72f, 0.90f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.12f); SetPresetInt("levels", 128);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.54f); SetPresetFloat("edgeThreshold", 0.045f); SetPresetFloat("edgeBlend", 0.11f); SetPresetColor("edgeColor", new Color(0.35f, 0.90f, 0.82f, 1f)); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.32f);
+                    break;
+                case FullStackPreset.ArchiveNewsreel:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 1.075f); SetPresetFloat("gamma", 1.02f); SetPresetFloat("saturation", 0.12f); SetPresetColor("pregradeTint", new Color(1f, 0.78f, 0.48f, 1f)); SetPresetFloat("pregradeTintStrength", 0.22f); SetPresetInt("levels", 96);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.025f); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.SoftDetail); SetPresetFloat("unsharpAmount", 0.18f);
+                    break;
+
+                // Horror & distress.
+                case FullStackPreset.SodiumBasement:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.055f); SetPresetFloat("contrast", 1.07f); SetPresetFloat("gamma", 1.035f); SetPresetFloat("saturation", 0.34f); SetPresetColor("pregradeTint", new Color(1f, 0.48f, 0.12f, 1f)); SetPresetFloat("pregradeTintStrength", 0.48f); SetPresetInt("levels", 72);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.035f); SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.08f); SetPresetInt("ghostFrames", 3);
+                    break;
+                case FullStackPreset.EvpRecorder:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.04f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 1.035f); SetPresetFloat("saturation", 0f); SetPresetInt("levels", 48); SetPresetBool("luminanceOnly", true);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Noise); SetPresetFloat("ditherStrength", 0.07f); SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.18f); SetPresetInt("ghostFrames", 5); SetPresetVector2("ghostOffsetPx", new Vector2(-0.4f, 0.25f));
+                    break;
+                case FullStackPreset.BiohazardFeed:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(640, 360)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.035f); SetPresetFloat("contrast", 1.08f); SetPresetFloat("gamma", 1.02f); SetPresetFloat("saturation", 0.20f); SetPresetColor("pregradeTint", new Color(0.58f, 1f, 0.16f, 1f)); SetPresetFloat("pregradeTintStrength", 0.68f); SetPresetInt("levels", 56);
+                    SetPresetBool("jitterEnabled", true); SetJitterPresetValues(JitterPreset.GlitchHash); SetPresetFloat("jitterStrength", 0.10f); SetPresetFloat("jitterAmountPx", 0.8f); SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.70f); SetPresetFloat("edgeThreshold", 0.04f); SetPresetFloat("edgeBlend", 0.15f); SetPresetColor("edgeColor", new Color(0.35f, 0.65f, 0.04f, 1f));
+                    break;
+
+                // Color & experimental.
+                case FullStackPreset.CrossProcess:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.015f); SetPresetFloat("contrast", 1.065f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.14f); SetPresetColor("pregradeTint", new Color(0.72f, 1f, 0.74f, 1f)); SetPresetFloat("pregradeTintStrength", 0.13f);
+                    SetPresetInt("levels", 96); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 80); SetPresetInt("levelsG", 112); SetPresetInt("levelsB", 72); SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.07f); SetPresetFloat("bleedIntensity", 0.5f);
+                    break;
+                case FullStackPreset.SolarizedChrome:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", -0.015f); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 1.015f); SetPresetFloat("saturation", 0.74f); SetPresetColor("pregradeTint", new Color(0.58f, 0.82f, 1f, 1f)); SetPresetFloat("pregradeTintStrength", 0.18f);
+                    SetPresetInt("levels", 28); SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 22); SetPresetInt("levelsG", 32); SetPresetInt("levelsB", 18); SetPresetBool("invert", true); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.Diamond); SetPresetFloat("ditherStrength", 0.08f);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.62f); SetPresetFloat("edgeThreshold", 0.04f); SetPresetFloat("edgeBlend", 0.14f); SetPresetColor("edgeColor", new Color(0.75f, 0.90f, 1f, 1f));
+                    break;
+                case FullStackPreset.AnaglyphPulse:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.035f); SetPresetFloat("saturation", 1.08f); SetPresetInt("levels", 96);
+                    SetBleedPresetValues(BleedPreset.RadialFringe); SetPresetFloat("bleedBlend", 0.30f); SetPresetFloat("bleedIntensity", 1.8f); SetPresetFloat("bleedRadialStrength", 1.5f); SetPresetBool("bleedEdgeOnly", true);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.055f); SetPresetInt("ghostFrames", 2);
+                    break;
+
+                // Research & analysis: visualization aids, not calibrated measurement transforms.
+                case FullStackPreset.LumaInspection:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.01f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 0f); SetPresetInt("levels", 256); SetPresetBool("luminanceOnly", true);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.30f); SetPresetFloat("unsharpThreshold", 0.045f);
+                    break;
+                case FullStackPreset.EdgeSurvey:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.025f); SetPresetFloat("saturation", 0.18f); SetPresetInt("levels", 256);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 1.10f); SetPresetFloat("edgeThreshold", 0.025f); SetPresetFloat("edgeBlend", 0.62f); SetPresetColor("edgeColor", new Color(0.10f, 0.90f, 1f, 1f));
+                    break;
+                case FullStackPreset.ChromaAlignment:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(960, 540)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.01f); SetPresetFloat("saturation", 1.08f); SetPresetInt("levels", 256);
+                    SetBleedPresetValues(BleedPreset.SoftLens); SetPresetFloat("bleedBlend", 0.34f); SetPresetFloat("bleedIntensity", 1.2f); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.22f);
+                    break;
+                case FullStackPreset.MotionPersistence:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.0f); SetPresetFloat("saturation", 0.92f); SetPresetInt("levels", 256);
+                    SetPresetBool("ghostEnabled", true); SetGhostPresetValues(GhostPreset.Persistence); SetPresetFloat("ghostBlend", 0.28f); SetPresetInt("ghostFrames", 8); SetPresetVector2("ghostOffsetPx", Vector2.zero);
+                    break;
+                case FullStackPreset.CompressionStress:
+                    SetPresetBool("useVirtualGrid", true); SetPresetVector2Int("virtualResolution", new Vector2Int(426, 240)); SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.02f); SetPresetFloat("saturation", 1.0f); SetPresetInt("levels", 64);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None); SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.20f);
+                    break;
+                case FullStackPreset.LowLightRecovery:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("exposure", 0.12f); SetPresetFloat("contrast", 0.97f); SetPresetFloat("gamma", 0.90f); SetPresetFloat("saturation", 0.72f); SetPresetInt("levels", 192);
+                    SetPresetBool("unsharpEnabled", true); SetUnsharpPresetValues(UnsharpPreset.LumaClean); SetPresetFloat("unsharpAmount", 0.18f); SetPresetFloat("unsharpThreshold", 0.08f);
+                    break;
+                case FullStackPreset.PseudocolorMap:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.02f); SetPresetFloat("gamma", 0.98f); SetPresetFloat("saturation", 1.28f); SetPresetInt("levels", 18);
+                    SetPresetBool("usePerChannel", true); SetPresetInt("levelsR", 5); SetPresetInt("levelsG", 9); SetPresetInt("levelsB", 13); SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None);
+                    SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.50f); SetPresetFloat("edgeThreshold", 0.05f); SetPresetFloat("edgeBlend", 0.10f); SetPresetColor("edgeColor", new Color(1f, 0.65f, 0.10f, 1f));
+                    break;
+                case FullStackPreset.ThresholdSegmentation:
+                    SetPresetBool("pregradeEnabled", true); SetPresetFloat("contrast", 1.04f); SetPresetFloat("gamma", 1f); SetPresetFloat("saturation", 0f); SetPresetInt("levels", 2); SetPresetBool("luminanceOnly", true);
+                    SetPresetEnum("ditherMode", (int)CrowImageEffects.DitherMode.None); SetPresetBool("edgeEnabled", true); SetPresetFloat("edgeStrength", 0.35f); SetPresetFloat("edgeThreshold", 0.02f); SetPresetFloat("edgeBlend", 0.10f); SetPresetColor("edgeColor", new Color(0.2f, 0.9f, 1f, 1f));
+                    break;
+            }
+        }
+
+        private void EnrichPresetWithProfessionalStages(FullStackPreset preset)
+        {
+            // The base preset authoring above establishes grade, palette, temporal,
+            // CRT and VHS values. This pass deliberately rebuilds the six newer
+            // families for every look so no stale or accidental combination survives.
+            SetPresetBool("lensSensorEnabled", false);
+            SetPresetBool("filmEnabled", false);
+            SetPresetBool("motionGlitchEnabled", false);
+            SetPresetBool("digitalVideoEnabled", false);
+            SetPresetBool("compositeEnabled", false);
+            SetPresetBool("lcdEnabled", false);
+
+            switch (preset)
+            {
+                // Clean & production
+                case FullStackPreset.CleanRetro:
+                    UseLens(LensPreset.CleanOptics); UseComposite(CompositePreset.CleanDecode);
+                    SetPresetFloat("compositeIntensity", 0.10f); break;
+                case FullStackPreset.CleanDigital:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("digitalVideoIntensity", 0.08f); break;
+                case FullStackPreset.SoftCinematic:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("filmHalation", 0.10f); break;
+                case FullStackPreset.SharpGameplay:
+                    UseLens(LensPreset.CleanOptics);
+                    SetPresetFloat("lensSensorIntensity", 0.16f); SetPresetFloat("lensBloom", 0.015f); break;
+                case FullStackPreset.MutedDocumentary:
+                    UseLens(LensPreset.CleanOptics); UseFilm(FilmPreset.Documentary);
+                    SetPresetFloat("filmIntensity", 0.38f); break;
+
+                // Pixel & handheld
+                case FullStackPreset.RetroConsole:
+                    UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("compositeIntensity", 0.22f); break;
+                case FullStackPreset.RetroHandheld:
+                    UseLcd(LcdPreset.RetroHandheld); break;
+                case FullStackPreset.PixelDither:
+                    UseLcd(LcdPreset.ModernPanel);
+                    SetPresetFloat("lcdIntensity", 0.22f); SetPresetFloat("lcdPixelScale", 1.5f); break;
+                case FullStackPreset.PocketRpg:
+                    UseLcd(LcdPreset.RetroHandheld);
+                    SetPresetFloat("lcdResponseSmear", 0.52f); break;
+                case FullStackPreset.MonochromeHandheld:
+                    UseLcd(LcdPreset.SlowTn);
+                    SetPresetFloat("lcdIntensity", 0.48f); SetPresetFloat("lcdSubpixelStrength", 0.05f); SetPresetFloat("lcdResponseSmear", 0.82f); break;
+
+                // CRT displays
+                case FullStackPreset.SoftConsumerCrt:
+                    UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("compositeIntensity", 0.28f); break;
+                case FullStackPreset.ArcadeCabinet:
+                    UseComposite(CompositePreset.CleanDecode);
+                    SetPresetFloat("compositeIntensity", 0.08f); break;
+                case FullStackPreset.BroadcastPvm:
+                    UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("compositeIntensity", 0.16f); break;
+                case FullStackPreset.GreenTerminal:
+                    UseComposite(CompositePreset.CleanDecode);
+                    SetPresetFloat("compositeIntensity", 0.06f); SetPresetFloat("compositeRainbow", 0f); break;
+                case FullStackPreset.AmberTerminal:
+                    UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("compositeIntensity", 0.08f); SetPresetFloat("compositeRainbow", 0f); break;
+
+                // VHS & tape
+                case FullStackPreset.CleanVhs:
+                    UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("compositeIntensity", 0.18f); break;
+                case FullStackPreset.RentalVhs:
+                    UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("compositeIntensity", 0.32f); break;
+                case FullStackPreset.Camcorder90s:
+                    UseLens(LensPreset.CamcorderSensor); UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("lensSensorIntensity", 0.42f); SetPresetFloat("compositeIntensity", 0.24f); break;
+                case FullStackPreset.HomeMovie:
+                    UseLens(LensPreset.CamcorderSensor); UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("lensSensorIntensity", 0.34f); SetPresetFloat("sensorRollingShutter", 0.8f); SetPresetFloat("compositeIntensity", 0.16f); break;
+                case FullStackPreset.DamagedTape:
+                    UseComposite(CompositePreset.UnstableRf);
+                    SetPresetFloat("compositeIntensity", 0.42f); break;
+
+                // Print & illustration
+                case FullStackPreset.GraphicNovel:
+                    UseFilm(FilmPreset.Documentary);
+                    SetPresetFloat("filmIntensity", 0.22f); SetPresetFloat("filmGrain", 0.035f); SetPresetFloat("filmHalation", 0f); break;
+                case FullStackPreset.PosterizedNoir:
+                    UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("filmIntensity", 0.30f); SetPresetFloat("filmHalation", 0.025f); break;
+                case FullStackPreset.NewspaperHalftone:
+                    UseFilm(FilmPreset.Documentary);
+                    SetPresetFloat("filmIntensity", 0.26f); SetPresetFloat("filmGrainSize", 1.6f); SetPresetFloat("filmDust", 0.025f); break;
+                case FullStackPreset.MangaInk:
+                    UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("filmIntensity", 0.18f); SetPresetFloat("filmGrain", 0.025f); SetPresetFloat("filmHalation", 0f); break;
+                case FullStackPreset.TwoToneComic:
+                    UseFilm(FilmPreset.Fine35); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("filmIntensity", 0.16f); SetPresetFloat("filmHalation", 0f); SetPresetFloat("digitalVideoIntensity", 0.06f); break;
+
+                // Digital & glitch
+                case FullStackPreset.DigitalGlitch:
+                    UseDigital(DigitalPreset.BrokenCodec); UseMotion(MotionPreset.Datamosh);
+                    SetPresetFloat("digitalVideoIntensity", 0.58f); SetPresetFloat("motionGlitchIntensity", 0.42f); break;
+                case FullStackPreset.LowFiLcd:
+                    UseDigital(DigitalPreset.WebVideo); UseLcd(LcdPreset.SlowTn);
+                    SetPresetFloat("digitalVideoIntensity", 0.32f); SetPresetFloat("lcdIntensity", 0.48f); break;
+                case FullStackPreset.SignalDesync:
+                    UseDigital(DigitalPreset.LowBitrate); UseMotion(MotionPreset.SignalTear); UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("digitalVideoIntensity", 0.38f); SetPresetFloat("motionGlitchIntensity", 0.34f); SetPresetFloat("compositeIntensity", 0.18f); break;
+                case FullStackPreset.BrokenLcd:
+                    UseDigital(DigitalPreset.WebVideo); UseLcd(LcdPreset.DamagedPanel);
+                    SetPresetFloat("digitalVideoIntensity", 0.26f); SetPresetFloat("lcdIntensity", 0.64f); break;
+                case FullStackPreset.CompressionPop:
+                    UseDigital(DigitalPreset.LowBitrate); UseMotion(MotionPreset.SubtleMotion);
+                    SetPresetFloat("digitalVideoIntensity", 0.50f); SetPresetFloat("motionGlitchIntensity", 0.14f); break;
+
+                // Dream & music video
+                case FullStackPreset.ChromaticDream:
+                    // Keep acquisition noise and lateral CA at zero: downstream quantization would
+                    // otherwise turn channel-shifted luminance grain into colored speckles.
+                    UseLens(LensPreset.CleanOptics); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.06f); SetPresetFloat("lensDistortion", 0f); SetPresetFloat("lensChromaticAberration", 0f); SetPresetFloat("lensVignette", 0f); SetPresetFloat("lensBloom", 0f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("filmIntensity", 0.05f); SetPresetFloat("filmGrain", 0.002f); SetPresetFloat("filmHalation", 0f); SetPresetFloat("filmGateWeave", 0f); break;
+                case FullStackPreset.NeonTrails:
+                    UseLens(LensPreset.DreamBloom); UseMotion(MotionPreset.SubtleMotion);
+                    SetPresetFloat("lensSensorIntensity", 0.72f); SetPresetFloat("lensDistortion", -0.006f); SetPresetFloat("lensChromaticAberration", 0.65f); SetPresetFloat("lensVignette", 0.08f); SetPresetFloat("lensBloom", 0.32f); SetPresetFloat("lensBloomRadius", 3.8f); SetPresetFloat("sensorRollingShutter", 0f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("motionGlitchIntensity", 0.10f); SetPresetFloat("motionColorSplit", 0.30f); SetPresetFloat("motionHistoryFps", 18f); break;
+                case FullStackPreset.PastelMemory:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("lensSensorIntensity", 0.35f); SetPresetFloat("lensDistortion", 0f); SetPresetFloat("lensChromaticAberration", 0.08f); SetPresetFloat("lensVignette", 0f); SetPresetFloat("lensBloom", 0.08f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("digitalVideoIntensity", 0.06f); break;
+                case FullStackPreset.MusicVideoGlow:
+                    UseLens(LensPreset.CamcorderSensor); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 1f); SetPresetFloat("lensDistortion", 0.34f); SetPresetFloat("lensChromaticAberration", 0.40f); SetPresetFloat("lensVignette", 0.14f); SetPresetFloat("lensBloom", 0.06f); SetPresetFloat("sensorRollingShutter", 0f); SetPresetFloat("sensorNoise", 0f); SetPresetFloat("sensorDeadPixels", 0f);
+                    SetPresetFloat("filmIntensity", 0.12f); SetPresetFloat("filmGrain", 0.006f); SetPresetFloat("filmHalation", 0.015f); break;
+                case FullStackPreset.FrozenEcho:
+                    UseMotion(MotionPreset.Datamosh); UseDigital(DigitalPreset.LowBitrate);
+                    SetPresetFloat("motionGlitchIntensity", 0.58f); SetPresetFloat("motionBlockSize", 32f); SetPresetFloat("motionVectorDisplacement", 5.2f); SetPresetFloat("motionFreezeRate", 0.38f); SetPresetFloat("motionColorSplit", 1.10f); SetPresetFloat("motionHistoryScale", 0.35f); SetPresetFloat("motionHistoryFps", 8f);
+                    SetPresetFloat("digitalVideoIntensity", 0.32f); SetPresetFloat("digitalQuantization", 0.14f); SetPresetFloat("digitalChromaSubsampling", 0.48f); SetPresetFloat("digitalBitratePumping", 0.18f); break;
+
+                // Surveillance & broadcast
+                case FullStackPreset.SecurityMonitor:
+                    UseLens(LensPreset.CamcorderSensor); UseDigital(DigitalPreset.WebVideo);
+                    SetPresetFloat("lensSensorIntensity", 0.28f); SetPresetFloat("sensorNoise", 0.035f); SetPresetFloat("digitalVideoIntensity", 0.22f); break;
+                case FullStackPreset.BroadcastNews:
+                    UseDigital(DigitalPreset.CleanStream); UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("digitalVideoIntensity", 0.10f); SetPresetFloat("compositeIntensity", 0.14f); break;
+                case FullStackPreset.CableAccess:
+                    UseDigital(DigitalPreset.WebVideo); UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("digitalVideoIntensity", 0.18f); SetPresetFloat("compositeIntensity", 0.24f); break;
+                case FullStackPreset.NightVision:
+                    UseLens(LensPreset.CamcorderSensor); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("lensSensorIntensity", 0.34f); SetPresetFloat("sensorNoise", 0.045f); SetPresetFloat("digitalVideoIntensity", 0.10f); break;
+                case FullStackPreset.ThermalScope:
+                    UseDigital(DigitalPreset.CleanStream); UseLcd(LcdPreset.ModernPanel);
+                    SetPresetFloat("digitalVideoIntensity", 0.12f); SetPresetFloat("lcdIntensity", 0.20f); SetPresetFloat("lcdSubpixelStrength", 0.08f); break;
+
+                // Horror & distress
+                case FullStackPreset.AnalogHorror:
+                    UseFilm(FilmPreset.DamagedStock); UseComposite(CompositePreset.UnstableRf);
+                    SetPresetFloat("filmIntensity", 0.40f); SetPresetFloat("filmDust", 0.10f); SetPresetFloat("filmScratches", 0.07f); SetPresetFloat("compositeIntensity", 0.34f); break;
+                case FullStackPreset.FoundFootage:
+                    UseLens(LensPreset.CamcorderSensor); UseFilm(FilmPreset.Documentary); UseComposite(CompositePreset.ConsumerCable);
+                    SetPresetFloat("lensSensorIntensity", 0.46f); SetPresetFloat("filmIntensity", 0.26f); SetPresetFloat("compositeIntensity", 0.22f); break;
+                case FullStackPreset.HauntedMonitor:
+                    UseFilm(FilmPreset.DamagedStock); UseComposite(CompositePreset.UnstableRf);
+                    SetPresetFloat("filmIntensity", 0.30f); SetPresetFloat("filmFlicker", 0.024f); SetPresetFloat("compositeIntensity", 0.30f); break;
+                case FullStackPreset.EmergencySignal:
+                    UseDigital(DigitalPreset.LowBitrate); UseMotion(MotionPreset.SignalTear); UseComposite(CompositePreset.Broadcast);
+                    SetPresetFloat("digitalVideoIntensity", 0.34f); SetPresetFloat("motionGlitchIntensity", 0.28f); SetPresetFloat("compositeIntensity", 0.14f); break;
+                case FullStackPreset.CorruptedMemory:
+                    UseDigital(DigitalPreset.BrokenCodec); UseMotion(MotionPreset.Datamosh);
+                    SetPresetFloat("digitalVideoIntensity", 0.52f); SetPresetFloat("motionGlitchIntensity", 0.46f); SetPresetFloat("motionFreezeRate", 0.24f); break;
+
+                // Color & experimental
+                case FullStackPreset.PsychedelicFringe:
+                    UseLens(LensPreset.DreamBloom); UseComposite(CompositePreset.UnstableRf);
+                    SetPresetFloat("lensChromaticAberration", 1.65f); SetPresetFloat("lensBloom", 0.16f); SetPresetFloat("compositeIntensity", 0.20f); break;
+                case FullStackPreset.BleachBypass:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Documentary);
+                    SetPresetFloat("lensSensorIntensity", 0.30f); SetPresetFloat("filmIntensity", 0.34f); SetPresetFloat("filmHalation", 0.02f); break;
+                case FullStackPreset.ColorPop:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("lensSensorIntensity", 0.18f); SetPresetFloat("digitalVideoIntensity", 0.06f); break;
+                case FullStackPreset.BlueMood:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.34f); SetPresetFloat("filmIntensity", 0.28f); SetPresetFloat("filmHalation", 0.035f); break;
+                case FullStackPreset.WarmNostalgia:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Warm16);
+                    SetPresetFloat("lensSensorIntensity", 0.28f); SetPresetFloat("lensChromaticAberration", 0.12f);
+                    SetPresetFloat("lensBloom", 0.035f); SetPresetFloat("lensVignette", 0.04f);
+                    SetPresetFloat("filmIntensity", 0.30f); SetPresetFloat("filmGrain", 0.022f); SetPresetFloat("filmGrainSize", 1.25f);
+                    SetPresetFloat("filmHalation", 0.04f); SetPresetFloat("filmGateWeave", 0.04f);
+                    SetPresetFloat("filmDust", 0.002f); SetPresetFloat("filmScratches", 0f); SetPresetFloat("filmFlicker", 0.002f);
+                    SetPresetBool("compositeEnabled", false); SetPresetFloat("compositeIntensity", 0f); break;
+            }
+
+            EnrichExpandedFullStackPreset(preset);
+        }
+
+        private void EnrichExpandedFullStackPreset(FullStackPreset preset)
+        {
+            switch (preset)
+            {
+                case FullStackPreset.NeutralEditorial:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream);
+                    SetPresetFloat("lensSensorIntensity", 0.10f); SetPresetFloat("digitalVideoIntensity", 0.035f); break;
+                case FullStackPreset.ProductShowcase:
+                    UseLens(LensPreset.CleanOptics); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.16f); SetPresetFloat("lensBloom", 0.018f); SetPresetFloat("filmIntensity", 0.10f); SetPresetFloat("filmGrain", 0.006f); SetPresetFloat("filmHalation", 0.01f); break;
+                case FullStackPreset.SoftPortrait:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.24f); SetPresetFloat("lensBloom", 0.028f); SetPresetFloat("lensVignette", 0.025f); SetPresetFloat("filmIntensity", 0.16f); SetPresetFloat("filmGrain", 0.012f); SetPresetFloat("filmHalation", 0.025f); break;
+
+                case FullStackPreset.DosVga:
+                    SetPresetBool("crtEnabled", true); SetCrtPresetValues(CrtPreset.PcMonitor); SetPresetFloat("crtScanlineStrength", 0.34f); SetPresetFloat("crtMaskStrength", 0.09f); SetPresetFloat("crtBloom", 0.05f); SetPresetFloat("crtCurvature", 0.01f);
+                    UseComposite(CompositePreset.CleanDecode); SetPresetFloat("compositeIntensity", 0.04f); break;
+                case FullStackPreset.EinkReader:
+                    UseLcd(LcdPreset.SlowTn); SetPresetFloat("lcdIntensity", 0.34f); SetPresetFloat("lcdSubpixelStrength", 0f); SetPresetFloat("lcdResponseSmear", 0.42f); SetPresetFloat("lcdViewingAngle", 0.02f); break;
+                case FullStackPreset.MicroconsoleLcd:
+                    UseLcd(LcdPreset.RetroHandheld); SetPresetFloat("lcdIntensity", 0.38f); SetPresetFloat("lcdResponseSmear", 0.34f); SetPresetFloat("lcdSubpixelStrength", 0.12f); break;
+
+                case FullStackPreset.ApertureGrilleHd:
+                    UseComposite(CompositePreset.CleanDecode); SetPresetFloat("compositeIntensity", 0.035f); SetPresetFloat("compositeRainbow", 0f); break;
+                case FullStackPreset.VectorDisplay:
+                    UseComposite(CompositePreset.CleanDecode); SetPresetFloat("compositeIntensity", 0.025f); SetPresetFloat("compositeRainbow", 0f); break;
+                case FullStackPreset.MonochromeLabScope:
+                    UseComposite(CompositePreset.Broadcast); SetPresetFloat("compositeIntensity", 0.055f); SetPresetFloat("compositeRainbow", 0f); break;
+
+                case FullStackPreset.SvhsMaster:
+                    UseLens(LensPreset.CleanOptics); UseComposite(CompositePreset.Broadcast); SetPresetFloat("lensSensorIntensity", 0.08f); SetPresetFloat("compositeIntensity", 0.08f); break;
+                case FullStackPreset.EpLongPlay:
+                    UseComposite(CompositePreset.ConsumerCable); SetPresetFloat("compositeIntensity", 0.28f); SetPresetFloat("compositeChromaBandwidth", 0.28f); break;
+                case FullStackPreset.PublicAccessDub:
+                    UseDigital(DigitalPreset.WebVideo); UseComposite(CompositePreset.ConsumerCable); SetPresetFloat("digitalVideoIntensity", 0.12f); SetPresetFloat("compositeIntensity", 0.22f); break;
+
+                case FullStackPreset.RisographDuotone:
+                    UseFilm(FilmPreset.Documentary); SetPresetFloat("filmIntensity", 0.18f); SetPresetFloat("filmGrain", 0.024f); SetPresetFloat("filmGrainSize", 1.7f); SetPresetFloat("filmHalation", 0f); break;
+                case FullStackPreset.PulpColor:
+                    UseFilm(FilmPreset.Warm16); SetPresetFloat("filmIntensity", 0.20f); SetPresetFloat("filmGrain", 0.030f); SetPresetFloat("filmDust", 0.012f); SetPresetFloat("filmHalation", 0.01f); break;
+                case FullStackPreset.BlueprintLines:
+                    UseDigital(DigitalPreset.CleanStream); SetPresetFloat("digitalVideoIntensity", 0.03f); break;
+
+                case FullStackPreset.PacketLoss:
+                    UseDigital(DigitalPreset.LowBitrate); UseMotion(MotionPreset.FrozenBlocks); SetPresetFloat("digitalVideoIntensity", 0.38f); SetPresetFloat("motionGlitchIntensity", 0.20f); SetPresetFloat("motionFreezeRate", 0.12f); break;
+                case FullStackPreset.DataBend:
+                    UseDigital(DigitalPreset.BrokenCodec); UseMotion(MotionPreset.SignalTear); SetPresetFloat("digitalVideoIntensity", 0.46f); SetPresetFloat("motionGlitchIntensity", 0.32f); SetPresetFloat("motionColorSplit", 0.34f); break;
+                case FullStackPreset.BufferCollapse:
+                    UseDigital(DigitalPreset.BrokenCodec); UseMotion(MotionPreset.FrozenBlocks); UseLcd(LcdPreset.DamagedPanel);
+                    SetPresetFloat("digitalVideoIntensity", 0.54f); SetPresetFloat("motionGlitchIntensity", 0.38f); SetPresetFloat("motionFreezeRate", 0.30f); SetPresetFloat("lcdIntensity", 0.18f); break;
+
+                case FullStackPreset.PrismMemory:
+                    UseLens(LensPreset.CinemaGlass); UseMotion(MotionPreset.FrozenBlocks); UseFilm(FilmPreset.Warm16);
+                    SetPresetFloat("lensSensorIntensity", 0.30f); SetPresetFloat("lensDistortion", 0.008f); SetPresetFloat("lensChromaticAberration", 0.10f); SetPresetFloat("lensVignette", 0.05f); SetPresetFloat("lensBloom", 0.06f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("motionGlitchIntensity", 0.45f); SetPresetFloat("motionBlockSize", 128f); SetPresetFloat("motionVectorDisplacement", 0.35f); SetPresetFloat("motionFreezeRate", 0.55f); SetPresetFloat("motionColorSplit", 0f); SetPresetFloat("motionHistoryScale", 0.35f); SetPresetFloat("motionHistoryFps", 8f);
+                    SetPresetFloat("filmIntensity", 0.38f); SetPresetFloat("filmGrain", 0.025f); SetPresetFloat("filmGateWeave", 0.30f); SetPresetFloat("filmHalation", 0.025f); SetPresetFloat("filmFlicker", 0.009f); break;
+                case FullStackPreset.InfraredDream:
+                    UseLens(LensPreset.CleanOptics); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.22f); SetPresetFloat("lensDistortion", 0f); SetPresetFloat("lensChromaticAberration", 0f); SetPresetFloat("lensVignette", 0.045f); SetPresetFloat("lensBloom", 0.025f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("filmIntensity", 0.16f); SetPresetFloat("filmGrain", 0.010f); SetPresetFloat("filmHalation", 0f); SetPresetFloat("filmGateWeave", 0f); break;
+                case FullStackPreset.AuroraFeedback:
+                    UseLens(LensPreset.DreamBloom); UseFilm(FilmPreset.Fine35);
+                    SetPresetFloat("lensSensorIntensity", 0.58f); SetPresetFloat("lensDistortion", -0.008f); SetPresetFloat("lensChromaticAberration", 0.80f); SetPresetFloat("lensVignette", 0.07f); SetPresetFloat("lensBloom", 0.28f); SetPresetFloat("lensBloomRadius", 4.2f); SetPresetFloat("sensorRollingShutter", 0f); SetPresetFloat("sensorNoise", 0f);
+                    SetPresetFloat("filmIntensity", 0.12f); SetPresetFloat("filmGrain", 0.004f); SetPresetFloat("filmHalation", 0.05f); break;
+
+                case FullStackPreset.BodycamEvidence:
+                    UseLens(LensPreset.CamcorderSensor); UseDigital(DigitalPreset.WebVideo); SetPresetFloat("lensSensorIntensity", 0.26f); SetPresetFloat("sensorRollingShutter", 0.48f); SetPresetFloat("sensorNoise", 0.018f); SetPresetFloat("digitalVideoIntensity", 0.20f); break;
+                case FullStackPreset.DroneTelemetry:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream); UseLcd(LcdPreset.ModernPanel); SetPresetFloat("lensSensorIntensity", 0.12f); SetPresetFloat("digitalVideoIntensity", 0.08f); SetPresetFloat("lcdIntensity", 0.10f); SetPresetFloat("lcdSubpixelStrength", 0.04f); break;
+                case FullStackPreset.ArchiveNewsreel:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Documentary); SetPresetFloat("lensSensorIntensity", 0.20f); SetPresetFloat("filmIntensity", 0.34f); SetPresetFloat("filmGrain", 0.045f); SetPresetFloat("filmDust", 0.025f); SetPresetFloat("filmScratches", 0.012f); SetPresetFloat("filmFlicker", 0.006f); break;
+
+                case FullStackPreset.SodiumBasement:
+                    UseLens(LensPreset.CamcorderSensor); UseFilm(FilmPreset.DamagedStock); UseComposite(CompositePreset.ConsumerCable); SetPresetFloat("lensSensorIntensity", 0.26f); SetPresetFloat("filmIntensity", 0.24f); SetPresetFloat("filmDust", 0.035f); SetPresetFloat("compositeIntensity", 0.14f); break;
+                case FullStackPreset.EvpRecorder:
+                    UseFilm(FilmPreset.DamagedStock); UseComposite(CompositePreset.UnstableRf); SetPresetFloat("filmIntensity", 0.22f); SetPresetFloat("filmFlicker", 0.015f); SetPresetFloat("compositeIntensity", 0.22f); SetPresetFloat("compositeDotCrawl", 0.06f); break;
+                case FullStackPreset.BiohazardFeed:
+                    UseDigital(DigitalPreset.BrokenCodec); UseMotion(MotionPreset.SignalTear); UseComposite(CompositePreset.Broadcast); SetPresetFloat("digitalVideoIntensity", 0.34f); SetPresetFloat("motionGlitchIntensity", 0.22f); SetPresetFloat("compositeIntensity", 0.08f); break;
+
+                case FullStackPreset.CrossProcess:
+                    UseLens(LensPreset.CinemaGlass); UseFilm(FilmPreset.Fine35); SetPresetFloat("lensSensorIntensity", 0.22f); SetPresetFloat("lensChromaticAberration", 0.16f); SetPresetFloat("filmIntensity", 0.22f); SetPresetFloat("filmGrain", 0.016f); SetPresetFloat("filmHalation", 0.025f); break;
+                case FullStackPreset.SolarizedChrome:
+                    UseLens(LensPreset.CleanOptics); UseDigital(DigitalPreset.CleanStream); SetPresetFloat("lensSensorIntensity", 0.18f); SetPresetFloat("lensChromaticAberration", 0.34f); SetPresetFloat("digitalVideoIntensity", 0.06f); break;
+                case FullStackPreset.AnaglyphPulse:
+                    UseLens(LensPreset.DreamBloom); UseMotion(MotionPreset.SubtleMotion); SetPresetFloat("lensChromaticAberration", 1.10f); SetPresetFloat("lensBloom", 0.08f); SetPresetFloat("motionGlitchIntensity", 0.08f); SetPresetFloat("motionColorSplit", 0.46f); break;
+
+                case FullStackPreset.LumaInspection:
+                    UseLens(LensPreset.CleanOptics); SetPresetFloat("lensSensorIntensity", 0.06f); SetPresetFloat("lensBloom", 0f); SetPresetFloat("lensVignette", 0f); break;
+                case FullStackPreset.EdgeSurvey:
+                    UseDigital(DigitalPreset.CleanStream); SetPresetFloat("digitalVideoIntensity", 0.025f); break;
+                case FullStackPreset.ChromaAlignment:
+                    UseComposite(CompositePreset.CleanDecode); SetPresetFloat("compositeIntensity", 0.05f); SetPresetFloat("compositeRainbow", 0f); break;
+                case FullStackPreset.MotionPersistence:
+                    UseMotion(MotionPreset.SubtleMotion); UseLcd(LcdPreset.SlowTn); SetPresetFloat("motionGlitchIntensity", 0.06f); SetPresetFloat("lcdIntensity", 0.28f); SetPresetFloat("lcdResponseSmear", 0.70f); SetPresetFloat("lcdSubpixelStrength", 0.03f); break;
+                case FullStackPreset.CompressionStress:
+                    UseDigital(DigitalPreset.LowBitrate); UseMotion(MotionPreset.SubtleMotion); SetPresetFloat("digitalVideoIntensity", 0.62f); SetPresetFloat("motionGlitchIntensity", 0.08f); SetPresetFloat("motionBlockSize", 24f); break;
+                case FullStackPreset.LowLightRecovery:
+                    UseLens(LensPreset.CamcorderSensor); UseDigital(DigitalPreset.CleanStream); SetPresetFloat("lensSensorIntensity", 0.18f); SetPresetFloat("sensorNoise", 0.012f); SetPresetFloat("sensorDeadPixels", 0.002f); SetPresetFloat("digitalVideoIntensity", 0.04f); break;
+                case FullStackPreset.PseudocolorMap:
+                    UseLcd(LcdPreset.ModernPanel); SetPresetFloat("lcdIntensity", 0.08f); SetPresetFloat("lcdSubpixelStrength", 0.02f); break;
+                case FullStackPreset.ThresholdSegmentation:
+                    UseDigital(DigitalPreset.CleanStream); SetPresetFloat("digitalVideoIntensity", 0.02f); break;
+            }
+        }
+
+        private void CalibrateFullStackPresetStrength()
+        {
+            PullTowardNeutral("contrast", 1f, 0.72f);
+            // Zero is an authored semantic choice for monochrome, threshold, terminal, and
+            // pseudocolor-source looks. Do not reintroduce source chroma while softening presets.
+            var authoredSaturation = SP("saturation");
+            if (authoredSaturation != null && authoredSaturation.floatValue > 0.001f)
+                PullTowardNeutral("saturation", 1f, 0.82f);
+            PullTowardNeutral("gamma", 1f, 0.85f);
+            PullTowardNeutral("crtBrightness", 1f, 0.65f);
+            ScalePresetFloat("crtScanlineStrength", 0.86f);
+            ScalePresetFloat("crtMaskStrength", 0.82f);
+            ScalePresetFloat("crtVignette", 0.78f);
+            // Full-stack looks should use ghosting as a supporting temporal cue, not as the
+            // dominant grade. Dedicated Ghost presets remain stronger and user-adjustable.
+            ScalePresetFloat("ghostBlend", 0.50f);
+            ScalePresetFloat("bleedBlend", 0.86f);
+            ScalePresetFloat("jitterStrength", 0.86f);
+            ScalePresetFloat("unsharpAmount", 0.85f);
+            ScalePresetFloat("edgeBlend", 0.82f);
+            ScalePresetFloat("vhsLumaNoise", 0.82f);
+            ScalePresetFloat("vhsChromaNoise", 0.82f);
+            ScalePresetFloat("lensBloom", 0.82f);
+            ScalePresetFloat("sensorNoise", 0.88f);
+            ScalePresetFloat("filmGrain", 0.88f);
+            ScalePresetFloat("filmHalation", 0.86f);
+            ScalePresetFloat("motionGlitchIntensity", 0.80f);
+            ScalePresetFloat("digitalVideoIntensity", 0.86f);
+            ScalePresetFloat("compositeIntensity", 0.88f);
+            ScalePresetFloat("lcdIntensity", 0.92f);
+        }
+
+        private void PullTowardNeutral(string propertyName, float neutral, float factor)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.floatValue = neutral + (property.floatValue - neutral) * factor;
+        }
+
+        private void ScalePresetFloat(string propertyName, float factor)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.floatValue *= factor;
+        }
+
+        private void SetPresetBool(string propertyName, bool value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.boolValue = value;
+        }
+
+        private void SetPresetFloat(string propertyName, float value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.floatValue = value;
+        }
+
+        private void SetPresetInt(string propertyName, int value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.intValue = value;
+        }
+
+        private void SetPresetEnum(string propertyName, int value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.enumValueIndex = value;
+        }
+
+        private void SetPresetVector2(string propertyName, Vector2 value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.vector2Value = value;
+        }
+
+        private void SetPresetVector3(string propertyName, Vector3 value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.vector3Value = value;
+        }
+
+        private void SetPresetColor(string propertyName, Color value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.colorValue = value;
+        }
+
+        private void SetPresetVector2Int(string propertyName, Vector2Int value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.vector2IntValue = value;
+        }
+
+        private void SetPresetObject(string propertyName, UnityEngine.Object value)
+        {
+            var property = SP(propertyName);
+            if (property != null) property.objectReferenceValue = value;
         }
 
         // =============================================================================================
@@ -4277,6 +7060,225 @@ namespace CrowFX.EditorTools
         }
 
         // MISC
+        private void LoadFullPresetFavorites()
+        {
+            _favoriteFullStackPresets.Clear();
+            string raw = EditorPrefs.GetString(Pref_FullPresetFavorites, "");
+            if (string.IsNullOrEmpty(raw)) return;
+
+            foreach (string value in raw.Split(','))
+                if (Enum.TryParse(value, out FullStackPreset preset))
+                    _favoriteFullStackPresets.Add(preset);
+        }
+
+        private void SaveFullPresetFavorites()
+        {
+            var values = new List<string>(_favoriteFullStackPresets.Count);
+            foreach (var preset in _favoriteFullStackPresets)
+                values.Add(preset.ToString());
+            values.Sort(StringComparer.Ordinal);
+            EditorPrefs.SetString(Pref_FullPresetFavorites, string.Join(",", values));
+        }
+
+        private void ToggleFullStackPresetFavorite(FullStackPreset preset)
+        {
+            if (!_favoriteFullStackPresets.Add(preset))
+                _favoriteFullStackPresets.Remove(preset);
+            SaveFullPresetFavorites();
+        }
+
+        private static string GetFullStackPresetDescription(FullStackPreset preset)
+        {
+            return preset switch
+            {
+                FullStackPreset.CleanRetro => "A restrained broadcast-tube finish with clean detail, mild raster texture, and almost no signal damage.",
+                FullStackPreset.CleanDigital => "Neutral modern finishing with subtle codec cohesion and conservative luma-only detail recovery.",
+                FullStackPreset.SoftCinematic => "Gentle cinema glass, fine grain, controlled halation, and a soft highlight rolloff without a washed-out grade.",
+                FullStackPreset.SharpGameplay => "Readable, low-latency presentation with crisp small detail and a very light optical finish.",
+                FullStackPreset.MutedDocumentary => "Natural documentary texture with reduced chroma, fine grain, and protected highlight and shadow detail.",
+                FullStackPreset.RetroConsole => "A 240-line console signal shaped by mild chroma spread, ordered dither, consumer decode, and a restrained tube.",
+                FullStackPreset.RetroHandheld => "Compact handheld pixels with visible subpixels and response persistence, while preserving game color.",
+                FullStackPreset.PixelDither => "Clean pixel reduction with deliberate ordered dither and only a trace of modern panel structure.",
+                FullStackPreset.PocketRpg => "A colorful portable-RPG display with a limited palette, soft response persistence, and readable sprites.",
+                FullStackPreset.MonochromeHandheld => "Low-refresh monochrome handheld response with slow liquid-crystal trails and muted subpixel structure.",
+                FullStackPreset.SoftConsumerCrt => "Soft domestic television optics with modest composite bandwidth loss, rounded glass, and broad beam glow.",
+                FullStackPreset.ArcadeCabinet => "Punchy arcade raster and phosphor definition with clean input signal and controlled bloom.",
+                FullStackPreset.BroadcastPvm => "Tight broadcast-monitor focus, subtle scan structure, accurate chroma, and minimal decoder contamination.",
+                FullStackPreset.GreenTerminal => "Green phosphor terminal rendering with focused raster lines and no accidental monochrome override of the tint.",
+                FullStackPreset.AmberTerminal => "Warm amber terminal phosphor, mild bloom, and stable broadcast-style decoding.",
+                FullStackPreset.CleanVhs => "First-generation SP tape with mild chroma softness, restrained transport noise, and stable broadcast decode.",
+                FullStackPreset.RentalVhs => "Well-used rental tape with visible generation loss, tracking wear, chroma delay, and consumer RF decoding.",
+                FullStackPreset.Camcorder90s => "Compact CCD camcorder optics feeding consumer tape, with sensor noise, rolling shutter, and soft chroma.",
+                FullStackPreset.HomeMovie => "Warm family-video texture with gentle camcorder defects, stable tape transport, and restrained noise.",
+                FullStackPreset.DamagedTape => "Severe but readable tape damage built from RF loss, tracking disruption, unstable decode, and short dropouts.",
+                FullStackPreset.GraphicNovel => "Color-aware graphic reduction with strong ink edges and just enough stock texture to avoid sterile fills.",
+                FullStackPreset.PosterizedNoir => "Purposeful black-and-white posterization with film texture and shaped contrast rather than simple desaturation.",
+                FullStackPreset.NewspaperHalftone => "Colored newsprint dots, imperfect stock texture, and limited tone steps without collapsing into grayscale.",
+                FullStackPreset.MangaInk => "High-key monochrome screentone and controlled line work tuned for legible faces and negative space.",
+                FullStackPreset.TwoToneComic => "Bold color-comic separation with clean edges, reduced levels, and a subtle printed surface.",
+                FullStackPreset.DigitalGlitch => "Motion-aware datamosh displacement combined with broken codec blocks and channel-edge corruption.",
+                FullStackPreset.LowFiLcd => "Compressed web-video texture displayed through a slower low-cost LCD response.",
+                FullStackPreset.SignalDesync => "Mixed digital and analog desynchronization with controlled tearing, block loss, and consumer signal bleed.",
+                FullStackPreset.BrokenLcd => "A damaged flat panel with stuck structure, uneven response, inversion artifacts, and moderate compression.",
+                FullStackPreset.CompressionPop => "Low-bitrate macroblocks and ringing that remain recognizable instead of turning into full-screen noise.",
+                FullStackPreset.ChromaticDream => "Rotoscoped pencil language informed by a-ha's Take On Me: near-monochrome tonal steps, diagonal hatch, and dark animated contours.",
+                FullStackPreset.NeonTrails => "Red neon, night streets, restrained bloom, and short optical echoes informed by The Weeknd's Blinding Lights visual era.",
+                FullStackPreset.PastelMemory => "Clean, saturated single-color set design informed by Billie Eilish's bad guy: graphic color blocks without fake film damage.",
+                FullStackPreset.MusicVideoGlow => "Pronounced barrel perspective informed by Missy Elliott's The Rain (Supa Dupa Fly), with clean color and controlled highlight response.",
+                FullStackPreset.FrozenEcho => "Sparse inter-frame corruption informed by Kanye West's Welcome to Heartbreak: held blocks and codec residue without constant screen noise.",
+                FullStackPreset.SecurityMonitor => "Compact surveillance optics, sensor noise, web-video compression, and limited but readable color.",
+                FullStackPreset.BroadcastNews => "Clean newsroom signal chain with gentle digital encoding and broadcast composite decoding.",
+                FullStackPreset.CableAccess => "Community-cable texture combining modest compression, consumer decoding, and slightly softened chroma.",
+                FullStackPreset.NightVision => "Green low-light sensor rendering with controlled noise and clean digital transmission.",
+                FullStackPreset.ThermalScope => "False-color scope presentation through a restrained digital feed and subtle modern panel matrix.",
+                FullStackPreset.AnalogHorror => "Damaged film and unstable analog decoding layered carefully so shadows remain readable.",
+                FullStackPreset.FoundFootage => "Camcorder capture, documentary stock wear, and consumer signal transport for credible recovered footage.",
+                FullStackPreset.HauntedMonitor => "Flickering damaged stock and unstable RF decode with spectral persistence rather than blanket darkness.",
+                FullStackPreset.EmergencySignal => "Urgent broadcast corruption using signal tears, low-bitrate blocks, and a mostly stable decoder.",
+                FullStackPreset.CorruptedMemory => "Aggressive temporal holds and codec failure shaped into isolated events instead of constant distortion.",
+                FullStackPreset.PsychedelicFringe => "Deliberate optical separation, bloom, and unstable color decoding for vivid psychedelic edges.",
+                FullStackPreset.BleachBypass => "Silver-retention-inspired density, restrained saturation, crisp texture, and subtle documentary grain.",
+                FullStackPreset.ColorPop => "Clean high-chroma separation with mild channel character and protected luminance detail.",
+                FullStackPreset.BlueMood => "Cool glass, fine grain, and a restrained blue bias that keeps skin and highlight separation visible.",
+                FullStackPreset.WarmNostalgia => "Warm small-gauge film color with clean optical softness and barely perceptible analog decode texture.",
+                FullStackPreset.NeutralEditorial => "Reference-minded editorial finishing with neutral color, gentle luma detail recovery, and nearly transparent encoding cohesion.",
+                FullStackPreset.ProductShowcase => "Clean commercial polish with controlled microcontrast, faithful color, restrained optics, and exceptionally fine grain.",
+                FullStackPreset.SoftPortrait => "Subtle warm portrait rendering with softened microdetail, mild highlight diffusion, and intact facial contrast.",
+                FullStackPreset.DosVga => "A crisp 320x200 VGA presentation with asymmetric channel steps, modest ordered dither, and a focused PC tube.",
+                FullStackPreset.EinkReader => "Paper-like monochrome quantization with ordered diffusion and slow neutral display response rather than colored LCD fringing.",
+                FullStackPreset.MicroconsoleLcd => "Compact 480x272 handheld pixels with restrained subpixel structure, light persistence, and readable saturated color.",
+                FullStackPreset.ApertureGrilleHd => "A late high-resolution aperture-grille monitor with fine raster structure, tight focus, and minimal decoder contamination.",
+                FullStackPreset.VectorDisplay => "Green vector-terminal styling built from luminous edge emphasis, broad phosphor glow, and almost no scanline texture.",
+                FullStackPreset.MonochromeLabScope => "Cool laboratory-monitor phosphor with accurate luma separation, restrained bloom, and a stable broadcast feed.",
+                FullStackPreset.SvhsMaster => "A clean S-VHS-inspired master with higher apparent chroma bandwidth, minimal dropouts, and almost stable transport.",
+                FullStackPreset.EpLongPlay => "Long-play tape texture with credible bandwidth loss, tracking wear, head switching, and intermittent RF dropout activity.",
+                FullStackPreset.PublicAccessDub => "A community-station dub combining moderate tape generations, consumer decoding, and early web-video compression.",
+                FullStackPreset.RisographDuotone => "Offset duotone print styling with pink and navy separation, coarse halftone rhythm, and absorbent paper texture.",
+                FullStackPreset.PulpColor => "Warm inexpensive color printing with reduced ink steps, bold outlines, stock grain, and lively but readable color.",
+                FullStackPreset.BlueprintLines => "Cyan technical-print visualization with pale structural line emphasis and restrained linear screening.",
+                FullStackPreset.PacketLoss => "Recognizable video interrupted by sparse frozen blocks and low-bitrate packet loss instead of continuous full-frame chaos.",
+                FullStackPreset.DataBend => "Purposeful channel quantization, hash displacement, codec breakage, and chromatic tears for experimental databend work.",
+                FullStackPreset.BufferCollapse => "Held-frame accumulation, damaged-panel response, and collapsing codec blocks shaped into large temporal events.",
+                FullStackPreset.PrismMemory => "Tactile frame-step motion and practical texture informed by Peter Gabriel's Sledgehammer, using pixilation cues instead of generic trails.",
+                FullStackPreset.InfraredDream => "Minimal monochrome stagecraft informed by Beyonce's Single Ladies: crisp performers, neutral blacks, and no decorative color contamination.",
+                FullStackPreset.AuroraFeedback => "Saturated mythic spectacle informed by Lil Nas X's MONTERO: magenta fantasy color, polished VFX bloom, and restrained portal-like fringe.",
+                FullStackPreset.BodycamEvidence => "Muted wide-angle body-camera capture with light rolling shutter, sensor noise, compression, and protected scene readability.",
+                FullStackPreset.DroneTelemetry => "Cool, clean aerial-monitor presentation with edge cues, modest encoding, and a subtle modern display matrix.",
+                FullStackPreset.ArchiveNewsreel => "Warm near-monochrome archive footage with documentary grain, sparse dust, scratches, and restrained gate instability.",
+                FullStackPreset.SodiumBasement => "Sodium-vapor orange contamination layered with camcorder response, worn stock, and faint consumer signal damage.",
+                FullStackPreset.EvpRecorder => "Low-chroma spectral persistence with intermittent film and RF instability designed for EVP-style paranormal footage.",
+                FullStackPreset.BiohazardFeed => "Acid-green emergency monitoring with isolated codec tears, edge cues, and controlled broadcast corruption.",
+                FullStackPreset.CrossProcess => "Photochemical cross-process styling with green-biased color separation, crisp optics, and restrained fine-grain texture.",
+                FullStackPreset.SolarizedChrome => "Inverted metallic tone bands, cool edge highlights, and clean digital presentation for graphic solarization experiments.",
+                FullStackPreset.AnaglyphPulse => "A strong but edge-limited red/cyan spatial pulse with optical separation and a short temporal color echo.",
+                FullStackPreset.LumaInspection => "Neutral grayscale inspection view with conservative luma sharpening; intended as a visual aid, not a calibrated measurement transform.",
+                FullStackPreset.EdgeSurvey => "Cyan structural-edge overlay over muted source color for quickly inspecting silhouettes and high-frequency detail.",
+                FullStackPreset.ChromaAlignment => "Exaggerated but clean channel displacement for checking color registration and fringe behavior against a stable grid.",
+                FullStackPreset.MotionPersistence => "Long neutral persistence trails for studying moving silhouettes and display response without unrelated damage effects.",
+                FullStackPreset.CompressionStress => "Deliberate low-resolution macroblock and ringing stress case for previewing how scenes survive aggressive encoding.",
+                FullStackPreset.LowLightRecovery => "Lifted shadow visualization with reduced chroma and noise-aware detail recovery for inspecting dark scene content.",
+                FullStackPreset.PseudocolorMap => "Discrete asymmetric color bands that make intensity and channel transitions easier to compare; a visualization aid, not scientific calibration.",
+                FullStackPreset.ThresholdSegmentation => "A deliberate two-level luminance segmentation preview with a faint edge cue for mask and silhouette evaluation.",
+                _ => "A fully authored CrowFX look."
+            };
+        }
+
+        private static string GetFullStackPresetPipeline(FullStackPreset preset)
+        {
+            switch (preset)
+            {
+                case FullStackPreset.CleanRetro: return "GRID > GRADE > DETAIL > COMPOSITE > CRT";
+                case FullStackPreset.CleanDigital: return "GRADE > LENS > DETAIL > DIGITAL";
+                case FullStackPreset.SoftCinematic: return "GRADE > LENS > FILM > DETAIL";
+                case FullStackPreset.SharpGameplay: return "GRID > GRADE > LENS > DETAIL";
+                case FullStackPreset.MutedDocumentary: return "GRADE > LENS > FILM > DITHER > DETAIL";
+                case FullStackPreset.RetroConsole: return "GRID > GRADE > RGB > DITHER > COMPOSITE > CRT";
+                case FullStackPreset.RetroHandheld:
+                case FullStackPreset.PixelDither:
+                case FullStackPreset.PocketRpg:
+                case FullStackPreset.MonochromeHandheld: return "GRID > GRADE > PALETTE > DITHER > LCD";
+                case FullStackPreset.SoftConsumerCrt:
+                case FullStackPreset.ArcadeCabinet:
+                case FullStackPreset.BroadcastPvm:
+                case FullStackPreset.GreenTerminal:
+                case FullStackPreset.AmberTerminal: return "GRADE > COMPOSITE > CRT";
+                case FullStackPreset.CleanVhs:
+                case FullStackPreset.RentalVhs:
+                case FullStackPreset.DamagedTape: return "GRADE > VHS > COMPOSITE";
+                case FullStackPreset.Camcorder90s:
+                case FullStackPreset.HomeMovie: return "LENS > SENSOR > GRADE > VHS > COMPOSITE";
+                case FullStackPreset.GraphicNovel:
+                case FullStackPreset.PosterizedNoir:
+                case FullStackPreset.NewspaperHalftone:
+                case FullStackPreset.MangaInk:
+                case FullStackPreset.TwoToneComic: return "GRADE > POSTERIZE > DITHER > EDGES > FILM";
+                case FullStackPreset.DigitalGlitch:
+                case FullStackPreset.SignalDesync:
+                case FullStackPreset.CompressionPop: return "JITTER > MOTION > DIGITAL > SIGNAL";
+                case FullStackPreset.LowFiLcd:
+                case FullStackPreset.BrokenLcd: return "GRADE > DIGITAL > LCD";
+                case FullStackPreset.ChromaticDream: return "GRADE > POSTERIZE > HATCH > EDGES > DETAIL";
+                case FullStackPreset.NeonTrails: return "GRADE > RGB > TEMPORAL > LENS > MOTION";
+                case FullStackPreset.PastelMemory: return "GRADE > LENS > DIGITAL > DETAIL";
+                case FullStackPreset.MusicVideoGlow: return "GRADE > FISHEYE > FILM > DETAIL";
+                case FullStackPreset.FrozenEcho: return "GRADE > MOTION > DIGITAL";
+                case FullStackPreset.SecurityMonitor:
+                case FullStackPreset.NightVision: return "LENS > SENSOR > GRADE > DIGITAL";
+                case FullStackPreset.BroadcastNews:
+                case FullStackPreset.CableAccess: return "GRADE > DIGITAL > COMPOSITE";
+                case FullStackPreset.ThermalScope: return "GRADE > PALETTE > DIGITAL > LCD";
+                case FullStackPreset.AnalogHorror:
+                case FullStackPreset.HauntedMonitor: return "GRADE > FILM > TEMPORAL > COMPOSITE";
+                case FullStackPreset.FoundFootage: return "LENS > SENSOR > FILM > VHS > COMPOSITE";
+                case FullStackPreset.EmergencySignal:
+                case FullStackPreset.CorruptedMemory: return "GRADE > MOTION > DIGITAL > COMPOSITE";
+                case FullStackPreset.PsychedelicFringe: return "GRADE > LENS > RGB > COMPOSITE";
+                case FullStackPreset.BleachBypass:
+                case FullStackPreset.BlueMood:
+                case FullStackPreset.WarmNostalgia: return "GRADE > LENS > FILM > DETAIL";
+                case FullStackPreset.ColorPop: return "GRADE > LENS > RGB > DITHER > DETAIL";
+                case FullStackPreset.NeutralEditorial: return "GRADE > LENS > DETAIL > DIGITAL";
+                case FullStackPreset.ProductShowcase:
+                case FullStackPreset.SoftPortrait: return "GRADE > LENS > FILM > DETAIL";
+                case FullStackPreset.DosVga: return "GRID > GRADE > DITHER > COMPOSITE > CRT";
+                case FullStackPreset.EinkReader:
+                case FullStackPreset.MicroconsoleLcd: return "GRID > GRADE > DITHER > TEMPORAL > LCD";
+                case FullStackPreset.ApertureGrilleHd:
+                case FullStackPreset.VectorDisplay:
+                case FullStackPreset.MonochromeLabScope: return "GRADE > EDGES > COMPOSITE > CRT";
+                case FullStackPreset.SvhsMaster:
+                case FullStackPreset.EpLongPlay: return "GRADE > VHS > COMPOSITE";
+                case FullStackPreset.PublicAccessDub: return "GRADE > VHS > DIGITAL > COMPOSITE";
+                case FullStackPreset.RisographDuotone:
+                case FullStackPreset.PulpColor: return "GRADE > POSTERIZE > DITHER > EDGES > FILM";
+                case FullStackPreset.BlueprintLines: return "GRADE > POSTERIZE > DITHER > EDGES > DIGITAL";
+                case FullStackPreset.PacketLoss:
+                case FullStackPreset.DataBend: return "GRID > JITTER > RGB > MOTION > DIGITAL";
+                case FullStackPreset.BufferCollapse: return "GRID > TEMPORAL > MOTION > DIGITAL > LCD";
+                case FullStackPreset.PrismMemory: return "GRADE > LENS > FRAME HOLD > FILM";
+                case FullStackPreset.InfraredDream: return "MONO > GRADE > LENS > FILM > DETAIL";
+                case FullStackPreset.AuroraFeedback: return "GRADE > RGB > TEMPORAL > LENS > FILM";
+                case FullStackPreset.BodycamEvidence: return "GRID > LENS > SENSOR > GRADE > DIGITAL";
+                case FullStackPreset.DroneTelemetry: return "GRID > GRADE > EDGES > DIGITAL > LCD";
+                case FullStackPreset.ArchiveNewsreel: return "GRADE > DITHER > LENS > FILM > DETAIL";
+                case FullStackPreset.SodiumBasement: return "LENS > SENSOR > GRADE > FILM > COMPOSITE";
+                case FullStackPreset.EvpRecorder: return "GRADE > DITHER > TEMPORAL > FILM > COMPOSITE";
+                case FullStackPreset.BiohazardFeed: return "GRID > GRADE > EDGES > MOTION > DIGITAL > COMPOSITE";
+                case FullStackPreset.CrossProcess: return "GRADE > RGB > LENS > FILM";
+                case FullStackPreset.SolarizedChrome: return "GRADE > INVERT > DITHER > EDGES > LENS > DIGITAL";
+                case FullStackPreset.AnaglyphPulse: return "GRADE > RGB > TEMPORAL > LENS > MOTION";
+                case FullStackPreset.LumaInspection: return "LUMA > LENS > DETAIL";
+                case FullStackPreset.EdgeSurvey: return "GRADE > EDGES > DIGITAL";
+                case FullStackPreset.ChromaAlignment: return "GRID > GRADE > RGB > DETAIL > COMPOSITE";
+                case FullStackPreset.MotionPersistence: return "GRADE > TEMPORAL > MOTION > LCD";
+                case FullStackPreset.CompressionStress: return "GRID > GRADE > DETAIL > MOTION > DIGITAL";
+                case FullStackPreset.LowLightRecovery: return "GRADE > LENS > SENSOR > DETAIL > DIGITAL";
+                case FullStackPreset.PseudocolorMap: return "GRADE > POSTERIZE > EDGES > LCD";
+                case FullStackPreset.ThresholdSegmentation: return "LUMA > POSTERIZE > EDGES > DIGITAL";
+                default: return "FULL EFFECT STACK";
+            }
+        }
+
         private void LoadFavorites()
         {
             _favoriteSections.Clear();

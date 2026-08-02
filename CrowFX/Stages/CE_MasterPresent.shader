@@ -24,13 +24,13 @@ Shader "Hidden/CrowFX/Stages/MasterPresent"
             sampler2D _OriginalTex;
             float _MasterBlend;
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
-                float3 processed = tex2D(_MainTex, i.uv).rgb;
-                float3 original  = tex2D(_OriginalTex, i.uv).rgb;
+                float4 processed = tex2D(_MainTex, i.uv);
+                float4 original  = tex2D(_OriginalTex, i.uv);
 
-                float3 outc = lerp(original, processed, saturate(_MasterBlend));
-                return float4(outc, 1);
+                float3 outc = lerp(original.rgb, processed.rgb, saturate(_MasterBlend));
+                return float4(outc, original.a);
             }
             ENDCG
         }

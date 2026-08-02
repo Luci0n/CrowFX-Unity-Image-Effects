@@ -7,6 +7,9 @@ Shader "Hidden/CrowFX/Stages/DepthMask"
 
         _UseDepthMask ("Use Depth Mask", Float) = 0
         _DepthThreshold ("Depth Threshold (Linear)", Float) = 1.0
+        _DepthFar ("Far Depth", Float) = 1000.0
+        _DepthSoftness ("Depth Softness", Float) = 0.25
+        _DepthOpacity ("Depth Opacity", Range(0,1)) = 1
     }
 
     SubShader
@@ -29,8 +32,9 @@ Shader "Hidden/CrowFX/Stages/DepthMask"
 
             float _UseDepthMask;
             float _DepthThreshold;
+            float _DepthFar, _DepthSoftness, _DepthOpacity, _DepthInvert;
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
 
@@ -43,8 +47,12 @@ Shader "Hidden/CrowFX/Stages/DepthMask"
                 float raw = tex2D(_CameraDepthTexture, uv).r;
                 float sceneDepth = LinearEyeDepth(raw);
 
-                // If closer than threshold -> keep base, else apply processed
-                float a = step(_DepthThreshold, sceneDepth);
+                float feather = max(_DepthSoftness, 0.00001);
+                float nearMask = smoothstep(_DepthThreshold - feather, _DepthThreshold + feather, sceneDepth);
+                float farMask = 1.0 - smoothstep(_DepthFar - feather, _DepthFar + feather, sceneDepth);
+                float a = nearMask * farMask;
+                if (_DepthInvert > 0.5) a = 1.0 - a;
+                a *= saturate(_DepthOpacity);
 
                 float3 outc = lerp(baseCol, fxCol, a);
                 return float4(outc, 1);

@@ -47,7 +47,7 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
                 return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
-            fixed4 frag(v2f_img i) : SV_Target
+            float4 frag(v2f_img i) : SV_Target
             {
                 float2 uv = i.uv;
 
@@ -84,25 +84,28 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
                     return float4(cur, 1.0);
                 }
 
-                // For overlay modes, scale prev once.
-                float3 prevScaled = prev * amt;
+                // Overlay modes should contribute only temporal residue. Compositing the
+                // complete previous frame brightens an unchanged image and makes every preset
+                // look permanently double-exposed even when nothing is moving.
+                float3 positiveResidue = max(prev - cur, 0.0);
+                float3 residueScaled = positiveResidue * amt;
 
                 // 1: Add
                 if (m < 1.5)
                 {
-                    cur = saturate(cur + prevScaled);
+                    cur = cur + residueScaled;
                     return float4(cur, 1.0);
                 }
 
                 // 2: Screen (result is already in [0,1] if inputs are)
                 if (m < 2.5)
                 {
-                    cur = 1.0 - (1.0 - cur) * (1.0 - prevScaled);
+                    cur = 1.0 - (1.0 - cur) * (1.0 - residueScaled);
                     return float4(cur, 1.0);
                 }
 
                 // 3: Max
-                cur = max(cur, prevScaled);
+                cur = max(cur, lerp(cur, prev, amt));
                 return float4(cur, 1.0);
             }
             ENDCG
