@@ -8,7 +8,28 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
 </p>
 
-CrowFX is a real-time image-effects stack for Unity. It combines calibrated analog display and tape simulation with film, lens, digital-video, stylization, temporal, masking, and color tools in one ordered pipeline.
+<p align="center">
+  <strong>Free, open-source CRT, VHS, film, glitch, dithering, and retro post-processing for Unity.</strong><br />
+  Built for the Built-in Render Pipeline, URP, and HDRP.
+</p>
+
+CrowFX turns a Unity camera into a complete real-time image-effects stack. Create convincing CRT displays, VHS and composite video, film damage, PSX-style color and dithering, analog-horror footage, digital glitches, LCD artifacts, and polished cinematic looks from one searchable inspector.
+
+<p align="center">
+  <a href="#installation"><strong>Install</strong></a> ·
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#showcase"><strong>Showcase</strong></a> ·
+  <a href="#effect-families"><strong>Effects</strong></a> ·
+  <a href="https://github.com/Luci0n/CrowFX-Unity-Image-Effects/releases"><strong>Releases</strong></a>
+</p>
+
+## Showcase
+
+| Ghosting, jitter, and dither | Posterize, RGB bleed, and virtual resolution |
+|---|---|
+| ![Unity ghosting, RGB jitter, and dithering post-processing](https://github.com/user-attachments/assets/604eeb15-4901-4867-8834-d25287cdd2c3) | ![Unity posterization, RGB bleed, sharpening, and virtual-resolution effects](https://github.com/user-attachments/assets/9504b73c-be0f-4189-9c00-7c710078ede5) |
+
+> Add `CrowImageEffects` to a camera, choose a look, and adjust or combine individual stages. CrowFX includes 88 curated looks and dedicated preset banks for each effect family.
 
 ## Highlights
 
@@ -41,6 +62,8 @@ In Unity, open `Window > Package Manager`, select `+` → `Add package from git 
 https://github.com/Luci0n/CrowFX-Unity-Image-Effects.git?path=CrowFX
 ```
 
+![Installing CrowFX through the Unity Package Manager](https://github.com/user-attachments/assets/8b059973-532d-47cd-8ec3-a3a35e8e3b58)
+
 ### Release package
 
 Download a `.unitypackage` from [Releases](https://github.com/Luci0n/CrowFX-Unity-Image-Effects/releases) and import it through `Assets > Import Package > Custom Package`.
@@ -53,6 +76,10 @@ Download a `.unitypackage` from [Releases](https://github.com/Luci0n/CrowFX-Unit
 4. Save reusable configurations as `CrowFXProfile` or `CrowFXPresetAsset` assets.
 
 For URP, add `CrowFXRendererFeature` to the active renderer. For HDRP, register `CrowFXCustomPostProcess` in the HDRP custom post-process list and add it to a Volume.
+
+<p align="center">
+  <img width="500" alt="CrowFX custom Unity inspector" src="https://github.com/user-attachments/assets/37c2cb3d-73c8-4c22-a8e7-58ef6f0c099f" />
+</p>
 
 ## Effect families
 
@@ -119,17 +146,9 @@ VHS and composite stages operate in a gamma-encoded signal domain. Creative stag
 
 Projects with aggressive shader stripping should keep the CrowFX shader folder or add the reported hidden shaders to **Always Included Shaders**.
 
-## Examples
+## More examples
 
-**Ghosting + Jitter + Dither**
-
-![Ghosting, jitter, and dither](https://github.com/user-attachments/assets/604eeb15-4901-4867-8834-d25287cdd2c3)
-
-**Posterize + RGB Bleed + Sharpening + Virtual Resolution**
-
-![Posterize, RGB bleed, sharpening, and virtual resolution](https://github.com/user-attachments/assets/9504b73c-be0f-4189-9c00-7c710078ede5)
-
-**Per-Channel Posterize + Edge Outline + Noise Dither**
+**Per-channel posterize + edge outline + noise dither**
 
 ![Per-channel posterize, edge outline, and noise dither](https://github.com/user-attachments/assets/597c467b-2dcf-46ab-9e45-bdf9f59ac928)
 
