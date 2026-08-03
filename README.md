@@ -78,7 +78,8 @@ Download a `.unitypackage` from [Releases](https://github.com/Luci0n/CrowFX-Unit
 For URP, add `CrowFXRendererFeature` to the active renderer. For HDRP, register `CrowFXCustomPostProcess` in the HDRP custom post-process list and add it to a Volume.
 
 <p align="center">
-  <img width="500" alt="CrowFX custom Unity inspector" src="https://github.com/user-attachments/assets/37c2cb3d-73c8-4c22-a8e7-58ef6f0c099f" />
+  <img width="610" alt="CrowFX 2.0 Unity inspector showing workflow controls and effect sections" src="Documentation/Images/crowfx-inspector-top.png" /><br />
+  <img width="610" alt="CrowFX 2.0 Unity inspector showing analog, display, and digital-video effects" src="Documentation/Images/crowfx-inspector-bottom.png" />
 </p>
 
 ## Effect families
