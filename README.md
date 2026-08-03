@@ -5,6 +5,7 @@
 <p align="center">
   <img alt="Unity 2022.3+" src="https://img.shields.io/badge/Unity-2022.3%2B-000000?logo=unity" />
   <img alt="CrowFX 2.0.0" src="https://img.shields.io/badge/CrowFX-2.0.0-6f4ca6" />
+  <a href="https://openupm.com/packages/com.luci0n.crowfx/"><img alt="OpenUPM package version" src="https://img.shields.io/npm/v/com.luci0n.crowfx?label=OpenUPM&amp;registry_uri=https%3A%2F%2Fpackage.openupm.com" /></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
 </p>
 
@@ -54,7 +55,15 @@ Unity 2022.3 LTS or newer is recommended.
 
 ## Installation
 
-### Unity Package Manager
+### OpenUPM
+
+Install the versioned package from the [OpenUPM registry](https://openupm.com/packages/com.luci0n.crowfx/):
+
+```text
+openupm add com.luci0n.crowfx
+```
+
+### Git URL
 
 In Unity, open `Window > Package Manager`, select `+` → `Add package from git URL`, and enter:
 
