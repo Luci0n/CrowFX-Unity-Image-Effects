@@ -36,6 +36,7 @@ namespace CrowFX
     public sealed class CrowImageEffects : MonoBehaviour
     {
         public enum DitherMode { None = 0, Ordered2x2 = 1, Ordered4x4 = 2, Ordered8x8 = 3, Noise = 4, BlueNoise = 5, Halftone = 6, Linear = 7, Diamond = 8 }
+        public enum HalftoneColorMode { Luminance = 0, CmykPrint = 1, RgbRosette = 2 }
         public enum PaletteMode { Ramp = 0, Nearest = 1 }
         public enum GhostCombineMode { Mix = 0, Add = 1, Screen = 2, Max = 3 }
         public enum BleedMode { Manual = 0, Radial = 1 }
@@ -148,12 +149,15 @@ namespace CrowFX
             public static readonly int Speed = Shader.PropertyToID("_Speed");
             public static readonly int DitherMode = Shader.PropertyToID("_DitherMode");
             public static readonly int DitherStrength = Shader.PropertyToID("_DitherStrength");
+            public static readonly int DitherSize = Shader.PropertyToID("_DitherSize");
             public static readonly int DitherAngle = Shader.PropertyToID("_DitherAngle");
             public static readonly int BlueNoise = Shader.PropertyToID("_BlueNoise");
             public static readonly int TemporalDither = Shader.PropertyToID("_TemporalDither");
             public static readonly int TemporalDitherRate = Shader.PropertyToID("_TemporalDitherRate");
             public static readonly int HalftoneScale = Shader.PropertyToID("_HalftoneScale");
             public static readonly int HalftoneDotGain = Shader.PropertyToID("_HalftoneDotGain");
+            public static readonly int HalftoneAreaModulation = Shader.PropertyToID("_HalftoneAreaModulation");
+            public static readonly int HalftoneColorMode = Shader.PropertyToID("_HalftoneColorMode");
 
             public static readonly int ThresholdTex = Shader.PropertyToID("_ThresholdTex");
             public static readonly int UseThreshold = Shader.PropertyToID("_UseThreshold");
@@ -522,12 +526,15 @@ namespace CrowFX
         // -------------------- Dithering --------------------
         [EffectSection(SectionKeys.Dither, 0)][Tooltip("Pattern used for dithering before final quantization.")] public DitherMode ditherMode = DitherMode.None;
         [EffectSection(SectionKeys.Dither, 10)][Tooltip("How strongly the dither pattern affects the image.")][Range(0f, 1f)] public float ditherStrength = 0.0f;
-        [EffectSection(SectionKeys.Dither, 20)][Tooltip("Rotation in degrees for the Linear dither pattern.")][Range(0f, 180f)] public float ditherAngle = 45f;
-        [EffectSection(SectionKeys.Dither, 30)][Tooltip("Blue-noise texture used by Blue Noise mode.")] public Texture2D blueNoise;
-        [EffectSection(SectionKeys.Dither, 40)][Tooltip("Decorrelate noise patterns over time to reduce stationary texture.")] public bool temporalDither = false;
-        [EffectSection(SectionKeys.Dither, 50)][Tooltip("Temporal dither updates per second.")][Range(1f, 120f)] public float temporalDitherRate = 30f;
-        [EffectSection(SectionKeys.Dither, 60)][Tooltip("Print screen cell size in virtual pixels.")][Range(2f, 24f)] public float halftoneScale = 6f;
-        [EffectSection(SectionKeys.Dither, 70)][Tooltip("Expands or contracts printed dots.")][Range(-0.5f, 0.5f)] public float halftoneDotGain = 0f;
+        [EffectSection(SectionKeys.Dither, 20)][Tooltip("Size multiplier for the dither pattern cells. One preserves the current sampling-grid size.")][Range(1f, 16f)] public float ditherSize = 1f;
+        [EffectSection(SectionKeys.Dither, 30)][Tooltip("Rotation in degrees for the Linear dither pattern.")][Range(0f, 180f)] public float ditherAngle = 45f;
+        [EffectSection(SectionKeys.Dither, 40)][Tooltip("Blue-noise texture used by Blue Noise mode.")] public Texture2D blueNoise;
+        [EffectSection(SectionKeys.Dither, 50)][Tooltip("Generate a newly seeded Noise or Blue Noise pattern over time without scrolling it.")] public bool temporalDither = false;
+        [EffectSection(SectionKeys.Dither, 60)][Tooltip("How many newly seeded dither patterns are generated per second.")][Range(1f, 120f)] public float temporalDitherRate = 30f;
+        [EffectSection(SectionKeys.Dither, 70)][Tooltip("Print screen cell size in virtual pixels.")][Range(2f, 24f)] public float halftoneScale = 6f;
+        [EffectSection(SectionKeys.Dither, 80)][Tooltip("Expands or contracts printed dots.")][Range(-0.5f, 0.5f)] public float halftoneDotGain = 0f;
+        [EffectSection(SectionKeys.Dither, 90)][Tooltip("Makes halftone dot area follow tone like a print screen: separated dots in highlights and connected ink in shadows.")] public bool halftoneAreaModulation = false;
+        [EffectSection(SectionKeys.Dither, 100)][Tooltip("Color separation used by area-modulated halftone dots. Luminance is restrained, CMYK simulates subtractive print inks, and RGB Rosette preserves the saturated electronic screen effect.")] public HalftoneColorMode halftoneColorMode = HalftoneColorMode.Luminance;
 
         // -------------------- VHS tape --------------------
         [EffectSection(SectionKeys.Vhs, 0)][Tooltip("Enable analog VHS tape simulation.")] public bool vhsEnabled = false;
@@ -986,7 +993,7 @@ namespace CrowFX
             if (IsEdgeActive()) samples += edgeUseNormals ? 11 : 6;
             if (digitalVideoEnabled && digitalVideoIntensity > 0f) samples += 5;
             if (IsVhsActive()) samples += 10;
-            if (compositeEnabled && compositeIntensity > 0f) samples += 5;
+            if (compositeEnabled && compositeIntensity > 0f) samples += 8;
             if (IsCrtActive()) samples += 20;
             if (lcdEnabled && lcdIntensity > 0f) samples += 4;
             return samples;
@@ -1251,6 +1258,7 @@ namespace CrowFX
 
             m.SetFloat(ShaderProps.DitherMode, (float)ditherMode);
             m.SetFloat(ShaderProps.DitherStrength, (ditherMode == DitherMode.None) ? 0f : ditherStrength);
+            m.SetFloat(ShaderProps.DitherSize, Mathf.Clamp(ditherSize, 1f, 16f));
             m.SetFloat(ShaderProps.DitherAngle, Mathf.Repeat(ditherAngle, 180f));
 
             m.SetTexture(ShaderProps.BlueNoise,
@@ -1259,6 +1267,8 @@ namespace CrowFX
             m.SetFloat(ShaderProps.TemporalDitherRate, temporalDitherRate);
             m.SetFloat(ShaderProps.HalftoneScale, halftoneScale);
             m.SetFloat(ShaderProps.HalftoneDotGain, halftoneDotGain);
+            m.SetFloat(ShaderProps.HalftoneAreaModulation, halftoneAreaModulation ? 1f : 0f);
+            m.SetFloat(ShaderProps.HalftoneColorMode, (float)halftoneColorMode);
 
             SetPixelGridParams(m);
 

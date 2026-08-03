@@ -30,6 +30,14 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
                 return frac((p.x + p.y) * p.x);
             }
 
+            float GaussianNoise(float2 id, float salt)
+            {
+                float sum = Hash21(id + salt * 11.17) + Hash21(id.yx + salt * 29.41);
+                sum += Hash21(id * float2(0.7549, 1.3719) + salt * 53.73);
+                sum += Hash21(id * float2(1.9317, 0.6183) + salt * 89.13);
+                return (sum - 2.0) * 0.5;
+            }
+
             float2 Warp(float2 uv)
             {
                 float2 p = uv * 2.0 - 1.0;
@@ -155,7 +163,8 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
 
                 // Frame-decorrelated grain: no spatial translation, hence no scrolling pattern.
                 float frame = floor(_Time.y * 60.0);
-                float grain = Hash21(floor(i.uv * _ScreenParams.xy) + float2(frame * 17.17, frame * 113.1)) - 0.5;
+                float2 noisePixel = floor(i.uv * _ScreenParams.xy);
+                float grain = GaussianNoise(noisePixel + float2(frame * 17.17, frame * 113.1), 5.0);
                 float signalNoise = grain * _Noise * lerp(1.35, 0.45, saturate(dot(clean, float3(0.2126, 0.7152, 0.0722))));
                 color += signalNoise * inside;
                 color *= 1.0 + sin(_Time.y * 6.28318530718 * max(_FlickerHz, 1.0)) * _Flicker;

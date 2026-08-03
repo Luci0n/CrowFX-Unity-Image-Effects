@@ -295,14 +295,22 @@ namespace CrowFX
         public CrowImageEffects.DitherMode ditherMode = CrowImageEffects.DitherMode.None;
         [Tooltip("How strongly the dither pattern affects the image.")]
         [Range(0f, 1f)] public float ditherStrength = 0f;
+        [Tooltip("Size multiplier for the dither pattern cells.")]
+        [Range(1f, 16f)] public float ditherSize = 1f;
         [Tooltip("Rotation in degrees for the Linear dither pattern.")]
         [Range(0f, 180f)] public float ditherAngle = 45f;
         [Tooltip("Blue-noise texture used by Blue Noise mode.")]
         public Texture2D blueNoise;
+        [Tooltip("Generate a newly seeded Noise or Blue Noise pattern over time without scrolling it.")]
         public bool temporalDither = false;
+        [Tooltip("How many newly seeded dither patterns are generated per second.")]
         [Range(1f, 120f)] public float temporalDitherRate = 30f;
         [Range(2f, 24f)] public float halftoneScale = 6f;
         [Range(-0.5f, 0.5f)] public float halftoneDotGain = 0f;
+        [Tooltip("Makes halftone dot area follow tone like a print screen: separated dots in highlights and connected ink in shadows.")]
+        public bool halftoneAreaModulation = false;
+        [Tooltip("Color separation used by area-modulated halftone dots.")]
+        public CrowImageEffects.HalftoneColorMode halftoneColorMode = CrowImageEffects.HalftoneColorMode.Luminance;
     }
 
     [Serializable]
@@ -558,12 +566,15 @@ namespace CrowFX
             fx.edgeNormalThreshold = edges.edgeNormalThreshold;
             fx.ditherMode = dither.ditherMode;
             fx.ditherStrength = dither.ditherStrength;
+            fx.ditherSize = dither.ditherSize;
             fx.ditherAngle = dither.ditherAngle;
             fx.blueNoise = dither.blueNoise;
             fx.temporalDither = dither.temporalDither;
             fx.temporalDitherRate = dither.temporalDitherRate;
             fx.halftoneScale = dither.halftoneScale;
             fx.halftoneDotGain = dither.halftoneDotGain;
+            fx.halftoneAreaModulation = dither.halftoneAreaModulation;
+            fx.halftoneColorMode = dither.halftoneColorMode;
             fx.crtEnabled = crt.crtEnabled;
             fx.crtCurvature = crt.crtCurvature;
             fx.crtOverscan = crt.crtOverscan;
@@ -746,12 +757,15 @@ namespace CrowFX
             edges.edgeNormalThreshold = fx.edgeNormalThreshold;
             dither.ditherMode = fx.ditherMode;
             dither.ditherStrength = fx.ditherStrength;
+            dither.ditherSize = fx.ditherSize;
             dither.ditherAngle = fx.ditherAngle;
             dither.blueNoise = fx.blueNoise;
             dither.temporalDither = fx.temporalDither;
             dither.temporalDitherRate = fx.temporalDitherRate;
             dither.halftoneScale = fx.halftoneScale;
             dither.halftoneDotGain = fx.halftoneDotGain;
+            dither.halftoneAreaModulation = fx.halftoneAreaModulation;
+            dither.halftoneColorMode = fx.halftoneColorMode;
             crt.crtEnabled = fx.crtEnabled;
             crt.crtCurvature = fx.crtCurvature;
             crt.crtOverscan = fx.crtOverscan;

@@ -1,0 +1,312 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-778879277899449679
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c3b7d4f4e934c9491d5ac6c62cb77a1, type: 3}
+  m_Name: Settings
+  m_EditorClassIdentifier:
+  master:
+    masterBlend: 1
+    qualityTier: 1
+    maskPlacement: 0
+  sampling:
+    pixelSize: 1
+    useVirtualGrid: 1
+    virtualResolution: {x: 640, y: 480}
+    samplingPhase: {x: 0, y: 0}
+    pixelAspect: 1
+    samplingFilter: 0
+  pregrade:
+    pregradeEnabled: 1
+    exposure: -0.12
+    contrast: 1.0864
+    gamma: 1.0339999
+    saturation: 0.8196
+    pregradeTint: {r: 1, g: 1, b: 1, a: 1}
+    pregradeTintStrength: 0
+    pregradeLift: {r: 0, g: 0, b: 0, a: 0}
+    pregradeGain: {r: 1, g: 1, b: 1, a: 1}
+    pregradeOffset: {r: 0, g: 0, b: 0, a: 0}
+    pregradeTemperature: 0
+    pregradeHighlightRolloff: 0.5
+  posterize:
+    levels: 96
+    usePerChannel: 0
+    levelsR: 512
+    levelsG: 512
+    levelsB: 512
+    animateLevels: 0
+    minLevels: 512
+    maxLevels: 512
+    speed: 1
+    luminanceOnly: 0
+    invert: 0
+  palette:
+    usePalette: 0
+    paletteMode: 1
+    paletteTex: {fileID: 0}
+    thresholdCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 1
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 1
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    paletteColorCount: 16
+    palettePerceptual: 1
+  textureMask:
+    useMask: 0
+    maskTex: {fileID: 0}
+    maskThreshold: 0.5
+    maskSoftness: 0.1
+    maskOpacity: 1
+    maskInvert: 0
+    maskChannel: 0
+    maskTiling: {x: 1, y: 1}
+    maskOffset: {x: 0, y: 0}
+  depthMask:
+    useDepthMask: 0
+    depthThreshold: 1
+    depthFar: 1000
+    depthSoftness: 0.25
+    depthOpacity: 1
+    depthInvert: 0
+  jitter:
+    jitterEnabled: 1
+    jitterStrength: 0.120400004
+    jitterMode: 2
+    jitterAmountPx: 1.2
+    jitterSpeed: 12
+    jitterUseSeed: 1
+    jitterSeed: 1337
+    jitterScanline: 1
+    jitterScanlineDensity: 360
+    jitterScanlineAmp: 1.1
+    jitterChannelWeights: {x: 1, y: 1, z: 1}
+    jitterDirR: {x: 1, y: 0}
+    jitterDirG: {x: 0, y: 1}
+    jitterDirB: {x: -1, y: -1}
+    jitterNoiseTex: {fileID: 0}
+    jitterClampUV: 1
+    jitterHashCellCount: 192
+    jitterHashTimeSmooth: 0.18
+    jitterHashRotateDeg: 7
+    jitterHashAniso: {x: 3.5, y: 0.45}
+    jitterHashWarpAmpPx: 2.8
+    jitterHashWarpCells: 48
+    jitterHashWarpSpeed: 14
+    jitterHashPerChannel: 1
+  bleed:
+    bleedBlend: 0.1376
+    bleedIntensity: 1.4
+    bleedMode: 0
+    bleedBlendMode: 2
+    shiftR: {x: -1.5, y: 0.2}
+    shiftG: {x: 0.4, y: -0.1}
+    shiftB: {x: 1.8, y: 0.1}
+    bleedEdgeOnly: 0
+    bleedEdgeThreshold: 0.05
+    bleedEdgePower: 2
+    bleedRadialCenter: {x: 0.5, y: 0.5}
+    bleedRadialStrength: 1
+    bleedSamples: 4
+    bleedSmear: 1.5
+    bleedFalloff: 1
+    bleedIntensityR: 1.25
+    bleedIntensityG: 0.65
+    bleedIntensityB: 1.35
+    bleedAnamorphic: {x: 2.3, y: 0.4}
+    bleedClampUV: 1
+    bleedPreserveLuma: 0
+    bleedWobbleAmp: 0.35
+    bleedWobbleFreq: 8
+    bleedWobbleScanline: 0
+  ghost:
+    ghostEnabled: 1
+    ghostBlend: 0.07
+    ghostOffsetPx: {x: 2.4, y: 1.2}
+    ghostFrames: 5
+    ghostCaptureInterval: 1
+    ghostStartDelay: 0
+    ghostWeightCurve: 1.15
+    ghostCombineMode: 2
+    ghostResolutionScale: 0.75
+    ghostFrameIntervalMs: 50
+    ghostDecayMs: 520
+  edges:
+    edgeEnabled: 0
+    edgeStrength: 1
+    edgeThreshold: 0.02
+    edgeBlend: 0.82
+    edgeColor: {r: 0, g: 0, b: 0, a: 1}
+    edgeThickness: 1
+    edgeUseNormals: 1
+    edgeNormalThreshold: 0.18
+  unsharp:
+    unsharpEnabled: 1
+    unsharpAmount: 0.493
+    unsharpRadius: 0.75
+    unsharpThreshold: 0.008
+    unsharpLumaOnly: 0
+    unsharpChroma: 0.65
+    sharpenMode: 0
+  dither:
+    ditherMode: 4
+    ditherStrength: 0.1
+    ditherSize: 1
+    ditherAngle: 45
+    blueNoise: {fileID: 0}
+    temporalDither: 0
+    temporalDitherRate: 30
+    halftoneScale: 6
+    halftoneDotGain: 0
+    halftoneAreaModulation: 0
+  crt:
+    crtEnabled: 1
+    crtCurvature: 0.1
+    crtOverscan: 1.04
+    crtScanlineStrength: 0.2924
+    crtScanlineCount: 240
+    crtBeamWidth: 0.56
+    crtMaskMode: 1
+    crtMaskStrength: 0.0492
+    crtMaskScale: 1
+    crtBloom: 0.1
+    crtBloomRadius: 1.8
+    crtVignette: 0.312
+    crtVignetteSoftness: 0.18
+    crtNoise: 0.012
+    crtFlicker: 0.006
+    crtBrightness: 1.0389999
+    crtTubeEdge: 0.82
+    crtBloomThreshold: 0.55
+    crtConvergencePx: 0.35
+    crtFocus: 0.48
+    crtBlackLevel: 0.012
+    crtHumBar: 0.012
+    crtFlickerHz: 60
+  vhs:
+    vhsEnabled: 1
+    vhsIntensity: 0.68
+    vhsTapeSpeed: 0.9
+    vhsHorizontalJitter: 2.8
+    vhsLineWobble: 4.5
+    vhsTracking: 0.38
+    vhsTrackingSpeed: 1.25
+    vhsTrackingWidth: 0.13
+    vhsChromaBleed: 5.5
+    vhsChromaBlur: 7
+    vhsColorLoss: 0.58
+    vhsLumaNoise: 0.073800005
+    vhsChromaNoise: 0.041
+    vhsDropout: 0.38
+    vhsHeadSwitching: 0.36
+    vhsHeadSwitchHeight: 0.085
+    vhsInterlace: 0.32
+    vhsStandard: 0
+    vhsTapeMode: 2
+    vhsGeneration: 6
+    vhsAgcInstability: 0.38
+    vhsVerticalChromaBlur: 2.8
+  professional:
+    lensSensorEnabled: 0
+    lensSensorIntensity: 1
+    lensDistortion: 0
+    lensChromaticAberration: 0
+    lensVignette: 0
+    lensBloom: 0
+    lensBloomRadius: 2
+    sensorRollingShutter: 0
+    sensorNoise: 0
+    sensorDeadPixels: 0
+    filmEnabled: 1
+    filmIntensity: 0.4
+    filmGrain: 0.1232
+    filmGrainSize: 1.8
+    filmHalation: 0.086
+    filmHalationRadius: 2.7
+    filmGateWeave: 0.75
+    filmDust: 0.1
+    filmScratches: 0.07
+    filmFlicker: 0.035
+    motionGlitchEnabled: 0
+    motionGlitchIntensity: 0.48000002
+    motionBlockSize: 32
+    motionVectorDisplacement: 2
+    motionFreezeRate: 0.1
+    motionColorSplit: 0
+    motionHistoryScale: 0.5
+    motionHistoryFps: 24
+    digitalVideoEnabled: 0
+    digitalVideoIntensity: 0.602
+    digitalBlockSize: 16
+    digitalQuantization: 0.25
+    digitalRinging: 0.1
+    digitalChromaSubsampling: 0.35
+    digitalMosquitoNoise: 0.05
+    digitalBitratePumping: 0
+    compositeEnabled: 1
+    compositeIntensity: 0.2992
+    compositeStandard: 0
+    compositeDotCrawl: 0.65
+    compositeRainbow: 0.48
+    compositeChromaBandwidth: 0.18
+    compositePhaseError: 0.5
+    compositeCombFilter: 0.12
+    lcdEnabled: 0
+    lcdIntensity: 0.736
+    lcdPixelScale: 2
+    lcdSubpixelStrength: 0.35
+    lcdInversion: 0.03
+    lcdViewingAngle: 0
+    lcdBacklightBleed: 0.05
+    lcdResponseSmear: 0.4
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5c65c96aa54149f88440d9414ff2d54e, type: 3}
+  m_Name: AnalogHorror
+  m_EditorClassIdentifier:
+  schemaVersion: 1
+  sourceLookId: AnalogHorror
+  displayName: Analog Horror
+  usage: 7
+  description: Damaged film and unstable analog decoding layered carefully so shadows
+    remain readable.
+  tags:
+  - built-in
+  - horror
+  authoredStrength: 1
+  gpuTier: 2
+  profile: {fileID: -778879277899449679}
+  requiredTextures: []

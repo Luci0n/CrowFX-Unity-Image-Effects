@@ -15,17 +15,18 @@ namespace CrowFX
     {
         public const int CurrentSchemaVersion = 1;
         [SerializeField, HideInInspector] private int schemaVersion = CurrentSchemaVersion;
+        [SerializeField, HideInInspector] private string sourceLookId;
         public string displayName = "New CrowFX Preset";
         public CrowFXPresetUsage usage = CrowFXPresetUsage.General;
         [TextArea(2, 5)] public string description;
         public string[] tags = Array.Empty<string>();
-        public Texture2D thumbnail;
         [Range(0f, 1f)] public float authoredStrength = 1f;
         public CrowFXGpuTier gpuTier = CrowFXGpuTier.Moderate;
         public CrowFXProfile profile;
         public Texture2D[] requiredTextures = Array.Empty<Texture2D>();
 
         public int SchemaVersion => schemaVersion;
+        public string SourceLookId => sourceLookId;
 
         public bool CanApply(out string reason)
         {

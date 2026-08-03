@@ -2,6 +2,27 @@
 
 All notable changes to CrowFX are documented in this file.
 
+## [2.0.1] - 2026-08-03
+
+### Added
+
+- Repository-ready preset assets for the complete Look Library, with direct editing and updating from current controls
+- Per-frame temporal controls for procedural-noise and blue-noise dithering, plus adjustable dither pattern size
+- Area-modulated halftone dots with Luminance, subtractive CMYK Print, and vivid RGB Rosette color modes
+
+### Changed
+
+- Reorganized and compacted the Look Library so built-in and custom preset assets share the same browsing and editing workflow
+- Reworked film grain and general noise generation to evolve per frame instead of scrolling a static texture
+- Strengthened composite-signal processing and rebuilt VHS noise, tracking, dropout, head-switching, and chroma behavior
+
+### Fixed
+
+- Restored active look, section, solo, mute, and bypass previews before entering Play Mode so previews cannot become runtime settings
+- Prevented cropped labels, hints, tabs, and buttons throughout the custom inspector
+- Fixed D3D11 compilation errors in the VHS tape shader
+- Reduced unwanted rainbow coloration in halftone output by making the former RGB treatment opt-in
+
 ## [2.0.0] - 2026-08-02
 
 ### Added

@@ -55,6 +55,38 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                             lerp(Hash21(id + float2(0,1)), Hash21(id + 1.0), f.x), f.y);
             }
 
+            // Four independent uniforms approximate the bell-shaped amplitude statistics
+            // of electronic/RF noise much better than a single flat hash sample.
+            float GaussianNoise(float2 id, float salt)
+            {
+                float sum = Hash21(id + salt * 11.17);
+                sum += Hash21(id.yx + salt * 29.41);
+                sum += Hash21(id * float2(0.7549, 1.3719) + salt * 53.73);
+                sum += Hash21(id * float2(1.9317, 0.6183) + salt * 89.13);
+                return (sum - 2.0) * 0.5;
+            }
+
+            // A spatially correlated random process which is regenerated per field.  Time
+            // is an event id, never an axis through the noise domain, so it changes rather
+            // than visibly scrolling.
+            float LineNoise(float scanLine, float field, float wavelength, float salt)
+            {
+                float x = scanLine / max(wavelength, 1.0);
+                float cell = floor(x);
+                float f = frac(x);
+                f = f * f * (3.0 - 2.0 * f);
+                float a = Hash21(float2(cell + salt * 13.7, field + salt * 47.3));
+                float b = Hash21(float2(cell + 1.0 + salt * 13.7, field + salt * 47.3));
+                return lerp(a, b, f) * 2.0 - 1.0;
+            }
+
+            float2 RotateChroma(float2 c, float phase)
+            {
+                float s = sin(phase);
+                float co = cos(phase);
+                return float2(co * c.x - s * c.y, s * c.x + co * c.y);
+            }
+
             float3 RGBtoYIQ(float3 c)
             {
                 return float3(dot(c, float3(0.299, 0.587, 0.114)),
@@ -101,8 +133,8 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 float envelope = active * lineEnvelope * max(body, tail * 0.58);
 
                 float leadingEdge = active * lineEnvelope * exp2(-x * x * 18000.0);
-                float rfNoise = Hash21(float2(floor(uv.x * _ScreenParams.x * 0.42) + salt * 37.0,
-                                              outputLine + epoch * 103.0)) - 0.5;
+                float rfNoise = GaussianNoise(float2(floor(uv.x * _ScreenParams.x * 0.32),
+                                                     outputLine + epoch * 103.0), salt);
                 float polarity = step(0.5, Hash21(eventId + 83.9));
                 return float4(envelope, leadingEdge, rfNoise, polarity);
             }
@@ -115,20 +147,36 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 float fieldRate = frameRate * 2.0;
                 float modeLoss = 1.0 + _TapeMode * 0.38 + _Generation * 0.075;
                 float outputLine = floor(uv.y * _MainTex_TexelSize.w);
-                float lineNoise = Hash21(float2(outputLine, floor(time * frameRate)));
-                float fineJitter = (lineNoise - 0.5) * _HorizontalJitter * modeLoss;
-                float wobble = (ValueNoise(float2(uv.y * 18.0, time * 2.1)) - 0.5) * _LineWobble * modeLoss;
+                float field = floor(time * fieldRate);
+
+                // Tape-speed error is a hierarchy of field-held processes: nearly independent
+                // line jitter, short correlated runs, and slow flagging over dozens of lines.
+                float lineJitter = GaussianNoise(float2(outputLine, field), 3.0);
+                float shortTbe = LineNoise(outputLine, field, 3.5, 7.0);
+                float longTbe = LineNoise(outputLine, floor(field * 0.25), 42.0, 13.0);
+                float fineJitter = (lineJitter * 0.72 + shortTbe * 0.28) * _HorizontalJitter * modeLoss;
+                float wobble = (longTbe * 0.72 + LineNoise(outputLine, field, 11.0, 19.0) * 0.28)
+                               * _LineWobble * modeLoss;
 
                 float trackingY = frac(time * _TrackingSpeed * 0.16 + 0.31);
                 float trackingDistance = WrapDistance(uv.y, trackingY);
                 float trackingBand = exp2(-trackingDistance * trackingDistance /
                                           max(0.00001, _TrackingWidth * _TrackingWidth) * 3.0) * _Tracking;
-                float trackingTear = (Hash21(float2(outputLine, floor(time * 8.0))) - 0.5) * 42.0 * trackingBand;
+                float trackingTear = (LineNoise(outputLine, field, 2.0, 31.0) * 28.0 +
+                                      GaussianNoise(float2(outputLine, field), 37.0) * 22.0) * trackingBand;
 
                 float headMask = 1.0 - smoothstep(0.0, max(0.005, _HeadSwitchHeight), 1.0 - uv.y);
-                float headWave = sin(uv.y * 920.0 + time * 37.0) * 7.0 * headMask * _HeadSwitching;
-                float xOffsetPx = fineJitter + wobble + trackingTear + headWave;
+                float headLocal = saturate((uv.y - (1.0 - max(0.005, _HeadSwitchHeight))) /
+                                           max(0.005, _HeadSwitchHeight));
+                float headJump = GaussianNoise(float2(field, floor(field * 0.5)), 43.0);
+                float headSkew = (headJump * 26.0 * headLocal * headLocal +
+                                  LineNoise(outputLine, field, 1.5, 47.0) * 7.0) * headMask * _HeadSwitching;
+                float xOffsetPx = fineJitter + wobble + trackingTear + headSkew;
                 float2 warpedUv = saturate(uv + float2(xOffsetPx * _MainTex_TexelSize.x, 0.0));
+                // The track transition also produces a small vertical discontinuity/fold at
+                // the bottom of a field, rather than a stationary sinusoidal overlay.
+                float headVerticalJump = (0.12 + abs(headJump) * 0.16) * _HeadSwitchHeight;
+                warpedUv.y = saturate(warpedUv.y - headMask * _HeadSwitching * headVerticalJump);
 
                 // Sample a real alternating field lattice, then blend toward it. This creates
                 // weave/comb behavior rather than merely darkening alternate output lines.
@@ -138,7 +186,13 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 warpedUv.y = lerp(warpedUv.y, saturate(fieldY), _Interlace);
 
                 float3 clean = tex2D(_MainTex, uv).rgb;
-                float luma = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, warpedUv).rgb)).x;
+                float lumaRadius = (0.75 + _TapeMode * 0.65 + _Generation * 0.10) * _MainTex_TexelSize.x;
+                float3 lumaCenter = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, warpedUv).rgb));
+                float lumaLeft = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(warpedUv - float2(lumaRadius, 0))).rgb)).x;
+                float lumaRight = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(warpedUv + float2(lumaRadius, 0))).rgb)).x;
+                // FM luminance retains much more horizontal bandwidth than color, but it is
+                // still bandwidth-limited and becomes softer at slow tape speeds/generations.
+                float luma = lumaCenter.x * 0.56 + (lumaLeft + lumaRight) * 0.22;
                 float chromaOffset = _ChromaBleed * _MainTex_TexelSize.x;
                 float chromaRadius = _ChromaBlur * modeLoss * _MainTex_TexelSize.x;
 
@@ -153,12 +207,22 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 float2 chroma = yiq0.yz * 0.38 + yiq1.yz * 0.25 + yiq2.yz * 0.13 + (yiqUp.yz + yiqDn.yz) * 0.12;
                 chroma *= 1.0 - saturate(_ColorLoss + _Generation * 0.045);
 
-                float frame = floor(time * fieldRate);
                 float2 pixel = floor(uv * _ScreenParams.xy);
-                float grain = Hash21(pixel + float2(frame * 71.0, frame * 19.0)) - 0.5;
-                float chromaGrainI = Hash21(pixel * 0.53 + float2(frame * 13.0, frame * 47.0)) - 0.5;
-                float chromaGrainQ = Hash21(pixel * 0.37 + float2(frame * 31.0, frame * 7.0)) - 0.5;
-                luma += grain * _LumaNoise * modeLoss * lerp(1.25, 0.45, saturate(luma));
+                float rf0 = GaussianNoise(pixel + float2(field * 71.0, field * 19.0), 53.0);
+                float rfL = GaussianNoise(pixel + float2(-1.0 + field * 71.0, field * 19.0), 53.0);
+                float rfR = GaussianNoise(pixel + float2(1.0 + field * 71.0, field * 19.0), 53.0);
+                float highBandRf = rf0 - (rfL + rfR) * 0.5;
+                float shortRf = GaussianNoise(float2(floor(pixel.x * 0.28), outputLine + field * 103.0), 59.0);
+                float grain = highBandRf * 0.62 + shortRf * 0.38;
+                luma += grain * _LumaNoise * modeLoss * lerp(1.30, 0.42, saturate(luma));
+
+                // Color-under noise is low-bandwidth and line-correlated.  Phase error rotates
+                // I/Q into colored horizontal streaks instead of independent RGB confetti.
+                float chromaCell = floor(pixel.x / max(3.0, 2.0 + _ChromaBlur * 0.8));
+                float chromaGrainI = GaussianNoise(float2(chromaCell, outputLine + field * 131.0), 61.0);
+                float chromaGrainQ = GaussianNoise(float2(chromaCell, outputLine + field * 149.0), 67.0);
+                float chromaPhase = LineNoise(outputLine, field, 5.0, 71.0) * _ChromaNoise * modeLoss * 1.8;
+                chroma = RotateChroma(chroma, chromaPhase);
                 chroma += float2(chromaGrainI, chromaGrainQ) * _ChromaNoise * modeLoss;
 
                 float4 dropoutA = DropoutLayer(uv, outputLine, time, 4.0, 1.0);
@@ -178,7 +242,7 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 luma = lerp(luma, concealedLoss, dropout);
                 chroma *= 1.0 - dropout * 0.94;
 
-                luma += (Hash21(pixel + frame * 3.7) - 0.5) * trackingBand * 0.45;
+                luma += GaussianNoise(pixel + field * 3.7, 73.0) * trackingBand * 0.45;
                 chroma *= 1.0 - trackingBand * 0.75;
                 float agcWave = ValueNoise(float2(time * 0.75, 91.7)) - 0.5;
                 luma = (luma - 0.5) * (1.0 + agcWave * _AgcInstability * modeLoss) + 0.5;

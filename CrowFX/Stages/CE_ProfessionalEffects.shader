@@ -37,6 +37,26 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                             lerp(Hash21(id + float2(0, 1)), Hash21(id + 1.0), f.x), f.y);
             }
 
+            float Hash31(float3 p)
+            {
+                p = frac(p * 0.1031);
+                p += dot(p, p.yzx + 33.33);
+                return frac((p.x + p.y) * p.z);
+            }
+
+            // Time is a separate hash dimension, not an offset added to the image plane.
+            // Every film frame therefore receives a newly exposed grain field with no
+            // coherent translation for the eye to track.
+            float TemporalGaussianNoise(float2 id, float frameId, float salt)
+            {
+                float3 key = float3(id, frameId);
+                float sum = Hash31(key + float3(salt * 11.17, salt * 7.31, salt * 3.13));
+                sum += Hash31(key.yxz + float3(salt * 29.41, salt * 17.03, salt * 5.71));
+                sum += Hash31(key * float3(0.7549, 1.3719, 0.9173) + salt * 53.73);
+                sum += Hash31(key * float3(1.9317, 0.6183, 1.2371) + salt * 89.13);
+                return (sum - 2.0) * 0.5;
+            }
+
             float3 ToSignal(float3 c)
             {
                 #if defined(UNITY_COLORSPACE_GAMMA)
@@ -125,7 +145,7 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 color *= 1.0 - vignette * radialVignette;
                 float frame = floor(_Time.y * 60.0);
                 float2 pixel = floor(uv * _ScreenParams.xy);
-                float grain = Hash21(pixel + frame * float2(17.0, 71.0)) - 0.5;
+                float grain = TemporalGaussianNoise(pixel, frame, 3.0);
                 color += grain * noiseAmount * lerp(1.3, 0.45, saturate(dot(color, float3(0.333, 0.333, 0.333))));
                 float dead = step(1.0 - deadRate * 0.0015, Hash21(pixel + 317.0));
                 float deadValue = Hash21(pixel + 811.0) > 0.5 ? 0.0 : 1.0;
@@ -158,7 +178,9 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 color += surround * float3(1.0, 0.22, 0.08) * hot * halation;
 
                 float2 grainPixel = floor(uv * _ScreenParams.xy / grainSize);
-                float grain = Hash21(grainPixel + frame * float2(37.0, 19.0)) - 0.5;
+                float fineGrain = TemporalGaussianNoise(grainPixel, frame, 7.0);
+                float coarseGrain = TemporalGaussianNoise(floor(grainPixel * 0.43), frame, 11.0);
+                float grain = fineGrain * 0.78 + coarseGrain * 0.22;
                 float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
                 color += grain * grainAmount * lerp(0.55, 1.25, 1.0 - saturate(abs(luma - 0.45) * 1.8));
 
@@ -233,7 +255,7 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float3 edge = source * 2.0 - left - right;
                 compressed += edge * ringing * 0.18;
                 float edgeGate = saturate(length(edge) * 4.0);
-                compressed += (Hash21(floor(pixel) + floor(_Time.y * 24.0)) - 0.5) * mosquito * edgeGate * 0.12;
+                compressed += TemporalGaussianNoise(floor(pixel), floor(_Time.y * 24.0), 17.0) * mosquito * edgeGate * 0.12;
                 return FromSignal(compressed);
             }
 
@@ -245,22 +267,52 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float phaseError = _ParamA.w;
                 float comb = _ParamB.x;
                 float standard = _ParamB.y;
+
                 float3 center = RGBtoYIQ(ToSignal(tex2D(_MainTex, uv).rgb));
-                float radius = lerp(5.0, 0.75, bandwidth) * _MainTex_TexelSize.x;
-                float3 left = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - float2(radius, 0))).rgb));
-                float3 right = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + float2(radius, 0))).rgb));
-                float2 chroma = center.yz * 0.5 + (left.yz + right.yz) * 0.25;
+                float radius = lerp(10.0, 0.65, bandwidth) * _MainTex_TexelSize.x;
+                float2 dx = float2(radius, 0.0);
+                float3 leftNear = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - dx * 0.5)).rgb));
+                float3 rightNear = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + dx * 0.5)).rgb));
+                float3 leftFar = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - dx)).rgb));
+                float3 rightFar = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + dx)).rgb));
+
+                // Composite chroma has far less horizontal bandwidth than luma.  A five-tap
+                // approximation gives the bandwidth control a useful soft-to-smeared range.
+                float2 chroma = center.yz * 0.28 + (leftNear.yz + rightNear.yz) * 0.24 +
+                                (leftFar.yz + rightFar.yz) * 0.12;
 
                 float lineIndex = floor(uv.y * _MainTex_TexelSize.w);
                 float cycles = standard < 0.5 ? 227.5 : 283.75;
-                float phase = (uv.x * cycles + lineIndex * (standard < 0.5 ? 0.5 : 0.25) + _Time.y * 0.75) * 6.2831853;
-                phase += (Noise21(float2(lineIndex * 0.05, _Time.y * 2.0)) - 0.5) * phaseError;
-                float lumaEdge = abs(left.x - right.x);
-                chroma += float2(cos(phase), sin(phase)) * lumaEdge * rainbow * 0.22;
-                center.x += dot(chroma, float2(cos(phase), sin(phase))) * dotCrawl * 0.12;
+                float fieldRate = standard < 0.5 ? 59.94 : 50.0;
+                float fieldIndex = floor(_Time.y * fieldRate);
+                float fieldSequence = standard < 0.5 ? fmod(fieldIndex, 4.0) * 0.25 :
+                                                       fmod(fieldIndex, 8.0) * 0.125;
+                float phase = (uv.x * cycles + lineIndex * (standard < 0.5 ? 0.5 : 0.25) + fieldSequence) * 6.2831853;
+                float2 carrier = float2(cos(phase), sin(phase));
+
+                // Time-base/subcarrier error changes decoded hue per scanline.  The old code
+                // only nudged the artifact carrier by a few hundredths of a radian, making the
+                // control effectively invisible.
+                float phaseRandom = Hash21(float2(lineIndex + 17.0, fieldIndex + 53.0)) * 2.0 - 1.0;
+                float phaseRadians = phaseRandom * phaseError * (standard < 0.5 ? 1.25 : 0.80);
+                float phaseSin = sin(phaseRadians);
+                float phaseCos = cos(phaseRadians);
+                chroma = float2(phaseCos * chroma.x - phaseSin * chroma.y,
+                                phaseSin * chroma.x + phaseCos * chroma.y);
+
+                // A better comb filter rejects more Y/C crosstalk.  At zero quality the
+                // controls can now reach severe consumer-decoder artifacts; at one they leave
+                // only a small residual instead of silently disabling the whole stage.
+                float decoderLeak = lerp(1.0, 0.08, saturate(comb));
+                float lumaHigh = center.x - (leftNear.x + rightNear.x) * 0.5;
+                float chromaLeak = dot(center.yz, carrier);
+                chroma += carrier * lumaHigh * rainbow * decoderLeak * 1.35;
+                center.x += chromaLeak * dotCrawl * decoderLeak * 0.55;
 
                 float3 above = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - float2(0, _MainTex_TexelSize.y))).rgb));
-                chroma = lerp(chroma, (chroma + above.yz) * 0.5, comb);
+                float3 below = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + float2(0, _MainTex_TexelSize.y))).rgb));
+                float2 verticalComb = chroma * 0.5 + (above.yz + below.yz) * 0.25;
+                chroma = lerp(chroma, verticalComb, saturate(comb) * 0.45);
                 return FromSignal(YIQtoRGB(float3(center.x, chroma)));
             }
 

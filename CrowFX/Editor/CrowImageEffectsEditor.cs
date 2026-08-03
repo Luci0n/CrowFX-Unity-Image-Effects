@@ -248,6 +248,8 @@ namespace CrowFX.EditorTools
             }
         }
 
+        private static int AssetLookCategoryIndex => FullStackPresetCategories.Length;
+
         // Custom UI extras
         private AnimBool _foldResolutionPresets;
 
@@ -285,6 +287,8 @@ namespace CrowFX.EditorTools
         private string _fullPresetSearch = "";
         private int _fullPresetCategory;
         private FullStackPreset _selectedFullStackPreset = FullStackPreset.SoftCinematic;
+        private CrowFXPresetAsset _selectedAssetLook;
+        private bool _selectedLookIsAsset;
         private float _fullPresetAmount = 0.85f;
         private bool _fullPresetFavoritesOnly;
         private readonly HashSet<FullStackPreset> _favoriteFullStackPresets = new();
@@ -377,6 +381,7 @@ namespace CrowFX.EditorTools
         private string _fullPresetPreviewSnapshot;
         private int _fullPresetPreviewTargetId;
         private FullStackPreset _previewedFullStackPreset;
+        private CrowFXPresetAsset _previewedAssetLook;
 
         private static readonly string[] _previewActionSections =
         {
@@ -406,9 +411,11 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         private void OnEnable()
         {
+            EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
+            EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
             _search = EditorPrefs.GetString(Pref_Search, "");
             _fullPresetSearch = EditorPrefs.GetString(Pref_FullPresetSearch, "");
-            _fullPresetCategory = Mathf.Clamp(EditorPrefs.GetInt(Pref_FullPresetCategory, 0), 0, FullStackPresetCategories.Length - 1);
+            _fullPresetCategory = Mathf.Clamp(EditorPrefs.GetInt(Pref_FullPresetCategory, 0), 0, AssetLookCategoryIndex);
             _selectedFullStackPreset = (FullStackPreset)Mathf.Clamp(
                 EditorPrefs.GetInt(Pref_FullPresetSelection, (int)FullStackPreset.SoftCinematic),
                 0, Enum.GetValues(typeof(FullStackPreset)).Length - 1);
@@ -422,10 +429,23 @@ namespace CrowFX.EditorTools
 
         private void OnDisable()
         {
+            EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
             CrowFxEditorUI.CloseActivePopup();
             RestorePreviewStatesIfNeeded();
             RestorePreviewBypassIfNeeded();
             UnregisterAllFoldListeners();
+        }
+
+        private void HandlePlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state != PlayModeStateChange.ExitingEditMode)
+                return;
+
+            // Preview operations mutate the inspected component temporarily. Restore
+            // before Unity snapshots the scene for Play Mode so previews never become
+            // runtime settings, including when domain reload is disabled.
+            RestorePreviewStatesIfNeeded();
+            RestorePreviewBypassIfNeeded();
         }
 
         private void RebuildAll()
@@ -933,7 +953,9 @@ namespace CrowFX.EditorTools
                     : "Screen";
 
                 string pixelation = targetFx != null && targetFx.pixelSize > 1 ? $"x{targetFx.pixelSize}" : "Off";
-                string ditherMode = targetFx != null ? targetFx.ditherMode.ToString() : "-";
+                string ditherMode = targetFx != null
+                    ? $"{targetFx.ditherMode} x{targetFx.ditherSize:0.#}"
+                    : "-";
 
                 string ghostInfo = targetFx != null && targetFx.ghostEnabled
                     ? $"{targetFx.ghostFrames}f / +{targetFx.ghostCaptureInterval} / d{targetFx.ghostStartDelay}"
@@ -4392,12 +4414,15 @@ namespace CrowFX.EditorTools
 
             var ditherMode = SP("ditherMode");
             var ditherStrength = SP("ditherStrength");
+            var ditherSize = SP("ditherSize");
             var ditherAngle = SP("ditherAngle");
             var blueNoise = SP("blueNoise");
             var temporalDither = SP("temporalDither");
             var temporalDitherRate = SP("temporalDitherRate");
             var halftoneScale = SP("halftoneScale");
             var halftoneDotGain = SP("halftoneDotGain");
+            var halftoneAreaModulation = SP("halftoneAreaModulation");
+            var halftoneColorMode = SP("halftoneColorMode");
 
             if (PropMatchesSearch(ditherMode))
                 DrawPropertyField(ditherMode, "Pattern");
@@ -4408,6 +4433,7 @@ namespace CrowFX.EditorTools
             if (hasDither)
             {
                 DrawPropertyField(ditherStrength, "Dither Strength");
+                DrawPropertyField(ditherSize, "Pattern Size");
 
                 bool needsAngle = modeIndex == (int)CrowImageEffects.DitherMode.Linear;
                 if (needsAngle)
@@ -4417,9 +4443,6 @@ namespace CrowFX.EditorTools
                 if (needsBlueNoise)
                 {
                     DrawPropertyField(blueNoise, "Blue Noise Texture");
-                    DrawPropertyField(temporalDither, "Temporal Decorrelation");
-                    if (temporalDither != null && temporalDither.boolValue)
-                        DrawPropertyField(temporalDitherRate, "Update Rate");
 
                     bool showedDiagnostic = false;
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("blue noise texture 128x128 square"))
@@ -4455,11 +4478,16 @@ namespace CrowFX.EditorTools
                     using (CrowFxEditorUI.PanelScope())
                     {
                         EditorGUILayout.LabelField("PRINT SCREEN", CrowFxEditorUI.Styles.SubHeaderLabel);
+                        DrawPropertyField(halftoneAreaModulation, "Area-Modulated Dots");
+                        if (halftoneAreaModulation != null && halftoneAreaModulation.boolValue)
+                            DrawPropertyField(halftoneColorMode, "Color Separation");
                         DrawPropertyField(halftoneScale, "Screen Cell Size");
                         DrawPropertyField(halftoneDotGain, "Dot Gain");
                     }
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("halftone dot matrix print"))
-                        CrowFxEditorUI.Hint("Halftone creates a repeating dot matrix look with softer clustered breakup.");
+                        CrowFxEditorUI.Hint(halftoneAreaModulation != null && halftoneAreaModulation.boolValue
+                            ? GetHalftoneColorModeHint(halftoneColorMode)
+                            : "Uses the halftone screen as a multilevel quantization threshold. Enable Area-Modulated Dots for tone-controlled print coverage.");
                 }
                 else if (modeIndex == (int)CrowImageEffects.DitherMode.Diamond)
                 {
@@ -4471,6 +4499,18 @@ namespace CrowFX.EditorTools
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("noise before quantization banding"))
                         CrowFxEditorUI.Hint("Adds structured noise before quantization to reduce banding.");
                 }
+
+                bool supportsTemporalPattern = modeIndex == (int)CrowImageEffects.DitherMode.Noise || needsBlueNoise;
+                if (supportsTemporalPattern)
+                {
+                    using (CrowFxEditorUI.PanelScope())
+                    {
+                        EditorGUILayout.LabelField("TEMPORAL PATTERN", CrowFxEditorUI.Styles.SubHeaderLabel);
+                        DrawPropertyField(temporalDither, "Change Over Time");
+                        if (temporalDither != null && temporalDither.boolValue)
+                            DrawPropertyField(temporalDitherRate, "Patterns Per Second");
+                    }
+                }
             }
 
             if (!hasDither)
@@ -4479,9 +4519,23 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint("Pattern is Off, so only posterization remains. Enable a dither pattern to reduce visible banding.");
             }
 
-            MarkDrawnMany("ditherMode", "ditherStrength", "ditherAngle", "blueNoise", "temporalDither", "temporalDitherRate", "halftoneScale", "halftoneDotGain");
+            MarkDrawnMany("ditherMode", "ditherStrength", "ditherSize", "ditherAngle", "blueNoise", "temporalDither", "temporalDitherRate", "halftoneScale", "halftoneDotGain", "halftoneAreaModulation", "halftoneColorMode");
 
             DrawAutoRemaining(SectionKeys.Dither);
+        }
+
+        private static string GetHalftoneColorModeHint(SerializedProperty colorMode)
+        {
+            int mode = colorMode != null ? colorMode.enumValueIndex : 0;
+            switch (mode)
+            {
+                case (int)CrowImageEffects.HalftoneColorMode.CmykPrint:
+                    return "CMYK Print screens cyan, magenta, yellow, and black at separate print angles, then mixes them subtractively.";
+                case (int)CrowImageEffects.HalftoneColorMode.RgbRosette:
+                    return "RGB Rosette retains the vivid separated-channel look. It is intentionally colorful and works well for stylized display patterns.";
+                default:
+                    return "Luminance uses one tone-driven screen, avoiding rainbow channel fringes while retaining a restrained trace of the source color.";
+            }
         }
 
         private void DrawShadersContent()
@@ -4688,59 +4742,151 @@ namespace CrowFX.EditorTools
             DrawAutoRemaining(SectionKeys.Lcd);
         }
 
-        private void DrawDataDrivenPresetAssets()
+        private void DrawAssetLookLibrary(bool includeAuthoringControls)
         {
-            if (EditorApplication.timeSinceStartup >= _nextPresetAssetRefresh)
+            RefreshDataDrivenPresets();
+
+            if (includeAuthoringControls)
             {
-                _nextPresetAssetRefresh = EditorApplication.timeSinceStartup + 2.0;
-                DataDrivenPresets.Clear();
-                string[] guids = AssetDatabase.FindAssets("t:CrowFXPresetAsset");
-                for (int i = 0; i < guids.Length; i++)
-                {
-                    var preset = AssetDatabase.LoadAssetAtPath<CrowFXPresetAsset>(AssetDatabase.GUIDToAssetPath(guids[i]));
-                    if (preset != null) DataDrivenPresets.Add(preset);
-                }
-                DataDrivenPresets.Sort((a, b) => string.Compare(a.displayName, b.displayName, StringComparison.OrdinalIgnoreCase));
+                GUILayout.Label("MY ASSET LOOKS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                CrowFxEditorUI.Hint("Repository-friendly custom looks saved under CrowFX/Presets.");
+                if (CrowFxEditorUI.MiniPill("SAVE CURRENT AS NEW LOOK", GUILayout.ExpandWidth(true)))
+                    CreatePresetFromCurrentControls();
             }
 
-            if (DataDrivenPresets.Count == 0) return;
-
-            using (CrowFxEditorUI.PanelScope())
+            var customMatches = CollectVisibleAssetLooks();
+            if (customMatches.Count == 0)
             {
-                GUILayout.Label("PROJECT PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
-                CrowFxEditorUI.Hint("Data-driven presets carry metadata, dependencies and a versioned profile. Applying one replaces the complete stack.");
-                for (int i = 0; i < DataDrivenPresets.Count; i += 2)
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        DrawDataDrivenPresetButton(DataDrivenPresets[i]);
-                        if (i + 1 < DataDrivenPresets.Count) DrawDataDrivenPresetButton(DataDrivenPresets[i + 1]);
-                        else GUILayout.FlexibleSpace();
-                    }
-                }
-            }
-            GUILayout.Space(5f);
-        }
-
-        private void DrawDataDrivenPresetButton(CrowFXPresetAsset preset)
-        {
-            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
-            string tooltip = $"{preset.usage} · {preset.gpuTier}\n{preset.description}";
-            if (!GUILayout.Button(new GUIContent(label, tooltip), CrowFxEditorUI.Styles.PillButton, GUILayout.MinWidth(120f), GUILayout.ExpandWidth(true))) return;
-
-            if (!preset.CanApply(out string reason))
-            {
-                EditorUtility.DisplayDialog("CrowFX Preset", reason, "OK");
+                CrowFxEditorUI.Hint(string.IsNullOrWhiteSpace(_fullPresetSearch)
+                    ? "No custom looks yet. Use Save Current as New Look after configuring the stack."
+                    : "No custom looks match this search.");
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog("Replace complete CrowFX stack?", $"Apply “{label}”? Every effect setting will be replaced.\n\n{preset.description}", "Apply", "Cancel")) return;
-            var effect = (CrowImageEffects)target;
+            if (!includeAuthoringControls)
+            {
+                CrowFxEditorUI.Divider();
+                GUILayout.Label("MY ASSET LOOKS", CrowFxEditorUI.Styles.SubHeaderLabel);
+            }
+
+            if (_selectedAssetLook == null || !customMatches.Contains(_selectedAssetLook))
+                _selectedAssetLook = customMatches[0];
+            EditorGUILayout.LabelField($"{customMatches.Count} {(customMatches.Count == 1 ? "look" : "looks")}", CrowFxEditorUI.Styles.HeaderHint,
+                GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
+            int visibleCount = Mathf.Min(customMatches.Count, 12);
+            for (int i = 0; i < visibleCount; i++)
+                DrawAssetLookBrowserRow(customMatches[i]);
+
+            if (customMatches.Count > visibleCount)
+                CrowFxEditorUI.Hint($"Showing the first {visibleCount} matches. Refine the search to narrow the library.");
+        }
+
+        private static void RefreshDataDrivenPresets()
+        {
+            if (EditorApplication.timeSinceStartup < _nextPresetAssetRefresh) return;
+            _nextPresetAssetRefresh = EditorApplication.timeSinceStartup + 2.0;
+            DataDrivenPresets.Clear();
+            string[] guids = AssetDatabase.FindAssets("t:CrowFXPresetAsset");
+            for (int i = 0; i < guids.Length; i++)
+            {
+                var preset = AssetDatabase.LoadAssetAtPath<CrowFXPresetAsset>(AssetDatabase.GUIDToAssetPath(guids[i]));
+                if (preset != null) DataDrivenPresets.Add(preset);
+            }
+            DataDrivenPresets.Sort((a, b) => string.Compare(a.displayName, b.displayName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private List<CrowFXPresetAsset> CollectVisibleAssetLooks()
+        {
+            string query = _fullPresetSearch?.Trim() ?? string.Empty;
+            var matches = new List<CrowFXPresetAsset>();
+            for (int i = 0; i < DataDrivenPresets.Count; i++)
+            {
+                var preset = DataDrivenPresets[i];
+                if (preset == null || !string.IsNullOrEmpty(preset.SourceLookId)) continue;
+                if (query.Length > 0 &&
+                    (preset.displayName?.IndexOf(query, StringComparison.OrdinalIgnoreCase) ?? -1) < 0 &&
+                    (preset.description?.IndexOf(query, StringComparison.OrdinalIgnoreCase) ?? -1) < 0 &&
+                    !Array.Exists(preset.tags ?? Array.Empty<string>(), tag => tag?.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0))
+                    continue;
+                matches.Add(preset);
+            }
+            return matches;
+        }
+
+        private static CrowFXPresetAsset FindGeneratedLookAsset(FullStackPreset preset)
+        {
+            RefreshDataDrivenPresets();
+            string id = preset.ToString();
+            for (int i = 0; i < DataDrivenPresets.Count; i++)
+            {
+                var asset = DataDrivenPresets[i];
+                if (asset != null && string.Equals(asset.SourceLookId, id, StringComparison.Ordinal)) return asset;
+            }
+            return null;
+        }
+
+        private void CreatePresetFromCurrentControls()
+        {
             RestorePreviewStatesIfNeeded();
-            Undo.RecordObject(effect, "Apply CrowFX Preset Asset");
-            preset.ApplyTo(effect);
-            EditorUtility.SetDirty(effect);
+            serializedObject.ApplyModifiedProperties();
+            var preset = CrowFXPresetAssetTools.CreateFromCurrent((CrowImageEffects)target, $"{RootFromThisScript}/Presets");
             serializedObject.Update();
+            if (preset == null) return;
+            _selectedAssetLook = preset;
+            _selectedLookIsAsset = true;
+            DataDrivenPresets.Clear();
+            _nextPresetAssetRefresh = 0.0;
+        }
+
+        private void UpdatePresetFromCurrentControls(CrowFXPresetAsset preset)
+        {
+            if (preset == null) return;
+            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
+            if (!EditorUtility.DisplayDialog("Update CrowFX preset?",
+                    $"Replace every saved setting in “{label}” with the component's current controls?\n\nThe preset metadata will be preserved.",
+                    "Update", "Cancel")) return;
+
+            RestorePreviewStatesIfNeeded();
+            serializedObject.ApplyModifiedProperties();
+            CrowFXPresetAssetTools.UpdateFromCurrent((CrowImageEffects)target, preset);
+            serializedObject.Update();
+            DataDrivenPresets.Clear();
+            _nextPresetAssetRefresh = 0.0;
+        }
+
+        private void DrawAssetLookBrowserRow(CrowFXPresetAsset preset)
+        {
+            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
+            string detail = $"{preset.usage}  ·  {preset.gpuTier}  ·  COMPLETE STACK";
+            bool selected = _selectedLookIsAsset && preset == _selectedAssetLook;
+            Color tint = new Color(0.38f, 0.72f, 0.82f, 1f);
+            float buttonHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
+            float savedWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, "SAVED", 54f);
+            float contentWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - savedWidth - 94f);
+            float nameHeight = CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f);
+            float detailHeight = Mathf.Max(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.RowDetail, 18f),
+                CrowFxEditorUI.Styles.RowDetail.CalcHeight(new GUIContent(detail), contentWidth) + 2f);
+            float rowHeight = Mathf.Max(buttonHeight + 10f, nameHeight + detailHeight + 6f);
+            var rect = GUILayoutUtility.GetRect(0f, rowHeight, GUILayout.ExpandWidth(true));
+            var savedRect = new Rect(rect.xMax - savedWidth - 5f, rect.y + (rect.height - buttonHeight) * 0.5f, savedWidth, buttonHeight);
+            var selectRect = new Rect(rect.x, rect.y, rect.width - savedWidth - 10f, rect.height);
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, selected ? new Color(tint.r, tint.g, tint.b, 0.34f) : new Color(1f, 1f, 1f, 0.025f));
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height), new Color(tint.r, tint.g, tint.b, 0.9f));
+                CrowFxEditorUI.Theme.DrawBorder(rect);
+            }
+
+            if (GUI.Button(selectRect, new GUIContent(string.Empty, preset.description), GUIStyle.none))
+                SelectAssetLook(preset);
+
+            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, nameHeight);
+            var detailRect = new Rect(rect.x + 10f, nameRect.yMax, selectRect.width - 16f, detailHeight);
+            GUI.Label(nameRect, label, CrowFxEditorUI.Styles.SubHeaderLabel);
+            GUI.Label(detailRect, detail, CrowFxEditorUI.Styles.RowDetail);
+
+            GUI.Button(savedRect, new GUIContent("SAVED", "Asset looks are already persistent project assets."), EditorStyles.miniButton);
         }
 
         private void DrawCrtContent()
@@ -4868,12 +5014,23 @@ namespace CrowFX.EditorTools
 
         private void DrawFullStackPresetButtons()
         {
+            RefreshDataDrivenPresets();
+            int customAssetCount = 0;
+            for (int i = 0; i < DataDrivenPresets.Count; i++)
+                if (DataDrivenPresets[i] != null && string.IsNullOrEmpty(DataDrivenPresets[i].SourceLookId)) customAssetCount++;
+
+            bool showSelectedDetails = false;
+            bool showSelectedAssetDetails = false;
             using (CrowFxEditorUI.PanelScope())
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     EditorGUILayout.LabelField("LOOK LIBRARY", CrowFxEditorUI.Styles.SubHeaderLabel);
-                    EditorGUILayout.LabelField($"{FullStackPresetCount} authored looks", CrowFxEditorUI.Styles.HeaderHint, GUILayout.Width(110f));
+                    int totalLooks = FullStackPresetCount + customAssetCount;
+                    string authoredLooks = $"{totalLooks} {(totalLooks == 1 ? "look" : "looks")}";
+                    EditorGUILayout.LabelField(authoredLooks, CrowFxEditorUI.Styles.HeaderHint,
+                        GUILayout.Width(CrowFxEditorUI.ContentWidth(CrowFxEditorUI.Styles.HeaderHint, authoredLooks, 110f)),
+                        GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
                 }
 
                 EditorGUILayout.LabelField("Browse first. Inspect the recipe. Apply only when it is right.", CrowFxEditorUI.Styles.HintText);
@@ -4882,37 +5039,80 @@ namespace CrowFX.EditorTools
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    string[] categoryNames = new string[FullStackPresetCategories.Length];
-                    for (int i = 0; i < categoryNames.Length; i++)
+                    string[] categoryNames = new string[FullStackPresetCategories.Length + 1];
+                    for (int i = 0; i < FullStackPresetCategories.Length; i++)
                         categoryNames[i] = $"{FullStackPresetCategories[i].Title}  ·  {FullStackPresetCategories[i].Entries.Length} LOOKS";
+                    categoryNames[AssetLookCategoryIndex] = $"MY ASSET LOOKS  ·  {customAssetCount} LOOKS";
 
                     int nextCategory = CrowFxEditorUI.ThemedPopup("look-library-category", _fullPresetCategory, categoryNames, GUILayout.ExpandWidth(true));
                     if (nextCategory != _fullPresetCategory)
                     {
                         _fullPresetCategory = nextCategory;
                         EditorPrefs.SetInt(Pref_FullPresetCategory, nextCategory);
-                        if (string.IsNullOrWhiteSpace(_fullPresetSearch))
+                        if (string.IsNullOrWhiteSpace(_fullPresetSearch) && nextCategory < FullStackPresetCategories.Length)
                             SelectFullStackPreset(FullStackPresetCategories[nextCategory].Entries[0].Preset);
                     }
 
-                    bool nextFavoritesOnly = GUILayout.Toggle(_fullPresetFavoritesOnly, "SAVED", EditorStyles.miniButton, GUILayout.Width(58f));
-                    if (nextFavoritesOnly != _fullPresetFavoritesOnly)
+                    if (_fullPresetCategory < FullStackPresetCategories.Length)
                     {
-                        _fullPresetFavoritesOnly = nextFavoritesOnly;
-                        EditorPrefs.SetBool(Pref_FullPresetFavoritesOnly, nextFavoritesOnly);
+                        float savedHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
+                        float savedWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, "SAVED", 58f);
+                        bool nextFavoritesOnly = GUILayout.Toggle(_fullPresetFavoritesOnly, "SAVED", EditorStyles.miniButton,
+                            GUILayout.Width(savedWidth), GUILayout.Height(savedHeight));
+                        if (nextFavoritesOnly != _fullPresetFavoritesOnly)
+                        {
+                            _fullPresetFavoritesOnly = nextFavoritesOnly;
+                            EditorPrefs.SetBool(Pref_FullPresetFavoritesOnly, nextFavoritesOnly);
+                        }
                     }
                 }
 
-                var browsedCategory = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
-                EditorGUILayout.LabelField(browsedCategory.Hint, CrowFxEditorUI.Styles.HeaderHint);
+                bool globalSearch = !string.IsNullOrWhiteSpace(_fullPresetSearch);
+                bool browsingAssetLooks = !globalSearch && _fullPresetCategory == AssetLookCategoryIndex;
+                if (browsingAssetLooks)
+                {
+                    GUILayout.Space(5f);
+                    DrawAssetLookLibrary(includeAuthoringControls: true);
+                    if (_selectedAssetLook != null)
+                    {
+                        _selectedLookIsAsset = true;
+                        if (_fullPresetPreviewActive && _previewedAssetLook != _selectedAssetLook)
+                            PreviewAssetLook(_selectedAssetLook);
+                        showSelectedAssetDetails = true;
+                    }
+                }
+                else
+                {
+                    if (globalSearch)
+                        CrowFxEditorUI.WrappedLabel("Searching authored and custom asset looks.", CrowFxEditorUI.Styles.HeaderHint);
+                    else
+                    {
+                        var browsedCategory = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
+                        CrowFxEditorUI.WrappedLabel(browsedCategory.Hint, CrowFxEditorUI.Styles.HeaderHint);
+                    }
 
-                var matches = CollectVisibleFullStackPresets();
-                GUILayout.Space(4f);
-                DrawFullStackBrowserList(matches);
+                    var matches = CollectVisibleFullStackPresets();
+                    showSelectedDetails = matches.Count > 0;
+                    GUILayout.Space(4f);
+                    DrawFullStackBrowserList(matches);
+                    if (globalSearch && CollectVisibleAssetLooks().Count > 0)
+                    {
+                        DrawAssetLookLibrary(includeAuthoringControls: false);
+                        showSelectedAssetDetails = _selectedLookIsAsset && _selectedAssetLook != null;
+                    }
+                }
             }
 
-            GUILayout.Space(4f);
-            DrawSelectedFullStackPreset();
+            if (showSelectedAssetDetails)
+            {
+                GUILayout.Space(4f);
+                DrawSelectedAssetLook();
+            }
+            else if (showSelectedDetails)
+            {
+                GUILayout.Space(4f);
+                DrawSelectedFullStackPreset();
+            }
             GUILayout.Space(6f);
         }
 
@@ -4949,6 +5149,8 @@ namespace CrowFX.EditorTools
         {
             if (matches.Count == 0)
             {
+                if (!string.IsNullOrWhiteSpace(_fullPresetSearch) && CollectVisibleAssetLooks().Count > 0)
+                    return;
                 CrowFxEditorUI.Hint(_fullPresetFavoritesOnly
                     ? "No saved looks match this filter. Select a look and use Save Look to build a personal shortlist."
                     : $"No looks match \"{_fullPresetSearch}\".");
@@ -4956,7 +5158,8 @@ namespace CrowFX.EditorTools
             }
 
             int visibleCount = Mathf.Min(matches.Count, 12);
-            EditorGUILayout.LabelField($"{matches.Count} {(matches.Count == 1 ? "look" : "looks")}", CrowFxEditorUI.Styles.HeaderHint);
+            EditorGUILayout.LabelField($"{matches.Count} {(matches.Count == 1 ? "look" : "looks")}", CrowFxEditorUI.Styles.HeaderHint,
+                GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
             for (int i = 0; i < visibleCount; i++)
                 DrawFullStackBrowserRow(matches[i].category, matches[i].entry);
 
@@ -4968,9 +5171,17 @@ namespace CrowFX.EditorTools
         {
             bool selected = entry.Preset == _selectedFullStackPreset;
             bool favorite = _favoriteFullStackPresets.Contains(entry.Preset);
-            var rect = GUILayoutUtility.GetRect(0f, 34f, GUILayout.ExpandWidth(true));
-            var favoriteRect = new Rect(rect.xMax - 51f, rect.y + 7f, 46f, 20f);
-            var selectRect = new Rect(rect.x, rect.y, rect.width - 55f, rect.height);
+            string pipeline = GetFullStackPresetPipeline(entry.Preset);
+            float buttonHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
+            float favoriteWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, favorite ? "SAVED" : "SAVE", 54f);
+            float contentWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - favoriteWidth - 94f);
+            float nameHeight = CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f);
+            float detailHeight = Mathf.Max(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.RowDetail, 18f),
+                CrowFxEditorUI.Styles.RowDetail.CalcHeight(new GUIContent(pipeline), contentWidth) + 2f);
+            float rowHeight = Mathf.Max(buttonHeight + 10f, nameHeight + detailHeight + 6f);
+            var rect = GUILayoutUtility.GetRect(0f, rowHeight, GUILayout.ExpandWidth(true));
+            var favoriteRect = new Rect(rect.xMax - favoriteWidth - 5f, rect.y + (rect.height - buttonHeight) * 0.5f, favoriteWidth, buttonHeight);
+            var selectRect = new Rect(rect.x, rect.y, rect.width - favoriteWidth - 10f, rect.height);
 
             if (Event.current.type == EventType.Repaint)
             {
@@ -4982,10 +5193,10 @@ namespace CrowFX.EditorTools
             if (GUI.Button(selectRect, GUIContent.none, GUIStyle.none))
                 SelectFullStackPreset(entry.Preset);
 
-            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, 16f);
-            var detailRect = new Rect(rect.x + 10f, rect.y + 17f, selectRect.width - 16f, 14f);
+            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, nameHeight);
+            var detailRect = new Rect(rect.x + 10f, nameRect.yMax, selectRect.width - 16f, detailHeight);
             GUI.Label(nameRect, entry.Label, CrowFxEditorUI.Styles.SubHeaderLabel);
-            GUI.Label(detailRect, GetFullStackPresetPipeline(entry.Preset), CrowFxEditorUI.Styles.HeaderHint);
+            GUI.Label(detailRect, pipeline, CrowFxEditorUI.Styles.RowDetail);
 
             string favoriteLabel = favorite ? "SAVED" : "SAVE";
             if (GUI.Button(favoriteRect, new GUIContent(favoriteLabel, favorite ? "Remove from saved looks" : "Save this look for quick access"), EditorStyles.miniButton))
@@ -5004,7 +5215,8 @@ namespace CrowFX.EditorTools
                 {
                     CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
                     bool favorite = _favoriteFullStackPresets.Contains(_selectedFullStackPreset);
-                    if (CrowFxEditorUI.MiniPill(favorite ? "UNSAVE" : "SAVE LOOK", GUILayout.Width(76f)))
+                    float saveWidth = CrowFxEditorUI.ContentWidth(CrowFxEditorUI.Styles.PillButton, favorite ? "UNSAVE" : "SAVE LOOK", 88f);
+                    if (CrowFxEditorUI.MiniPill(favorite ? "UNSAVE" : "SAVE LOOK", GUILayout.Width(saveWidth)))
                         ToggleFullStackPresetFavorite(_selectedFullStackPreset);
                 }
 
@@ -5040,19 +5252,164 @@ namespace CrowFX.EditorTools
                     if (CrowFxEditorUI.PillButton($"APPLY {entry.Label.ToUpperInvariant()}", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
                         ConfirmAndApplyFullStackPreset(_selectedFullStackPreset, entry.Label);
                 }
+
+                DrawUpdateSelectedAssetButton(FindGeneratedLookAsset(_selectedFullStackPreset));
             }
         }
+
+        private void DrawSelectedAssetLook()
+        {
+            var preset = _selectedAssetLook;
+            if (preset == null) return;
+            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
+            Color tint = new Color(0.38f, 0.72f, 0.82f, 0.24f);
+
+            using (CrowFxEditorUI.PanelScope())
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    CrowFxEditorUI.TagPill("MY ASSET LOOKS", tint, GUILayout.ExpandWidth(true));
+                    CrowFxEditorUI.TagPill("SAVED", null, GUILayout.Width(88f));
+                }
+
+                GUILayout.Space(4f);
+                EditorGUILayout.LabelField(label, CrowFxEditorUI.Styles.SectionTitle);
+                CrowFxEditorUI.Hint(string.IsNullOrWhiteSpace(preset.description)
+                    ? "Complete-stack custom asset look."
+                    : preset.description);
+                EditorGUILayout.LabelField($"RECIPE  {preset.usage}  ·  {preset.gpuTier}  ·  COMPLETE STACK", CrowFxEditorUI.Styles.SummaryText);
+
+                EditorGUI.BeginChangeCheck();
+                float nextAmount = EditorGUILayout.Slider(new GUIContent("Amount", "Sets the final whole-look blend while preserving the saved internal relationships."), _fullPresetAmount, 0.25f, 1f);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _fullPresetAmount = nextAmount;
+                    EditorPrefs.SetFloat(Pref_FullPresetAmount, nextAmount);
+                    if (_fullPresetPreviewActive) PreviewAssetLook(preset);
+                }
+
+                if (_fullPresetPreviewActive)
+                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {GetAssetLookLabel(_previewedAssetLook)}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
+                else
+                    EditorGUILayout.LabelField("SELECTING IS SAFE  •  APPLY REQUIRES CONFIRMATION  •  UNDO SUPPORTED", CrowFxEditorUI.Styles.HeaderHint);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
+                    if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                    {
+                        if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
+                        else PreviewAssetLook(preset);
+                    }
+
+                    if (CrowFxEditorUI.PillButton($"APPLY {label.ToUpperInvariant()}", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
+                        ConfirmAndApplyAssetLook(preset);
+                }
+
+                DrawUpdateSelectedAssetButton(preset);
+            }
+        }
+
+        private void DrawUpdateSelectedAssetButton(CrowFXPresetAsset preset)
+        {
+            string tooltip = _fullPresetPreviewActive
+                ? "Stop or apply the live preview before updating its repository asset."
+                : "Overwrite this selected look's embedded profile with the current CrowFX controls. Metadata and asset GUID are preserved.";
+            using (new EditorGUI.DisabledScope(preset == null || _fullPresetPreviewActive))
+            {
+                if (CrowFxEditorUI.PillButton("UPDATE ASSET FROM CURRENT CONTROLS", 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                    UpdatePresetFromCurrentControls(preset);
+            }
+            var rect = GUILayoutUtility.GetLastRect();
+            GUI.Label(rect, new GUIContent(string.Empty, tooltip), GUIStyle.none);
+        }
+
+        private void SelectAssetLook(CrowFXPresetAsset preset)
+        {
+            if (preset == null) return;
+            _selectedAssetLook = preset;
+            _selectedLookIsAsset = true;
+            if (_fullPresetPreviewActive) PreviewAssetLook(preset);
+            GUI.FocusControl(null);
+        }
+
+        private void PreviewAssetLook(CrowFXPresetAsset preset)
+        {
+            var targetFx = (CrowImageEffects)target;
+            if (targetFx == null || preset == null || !preset.CanApply(out _)) return;
+            RestoreSectionPreviewStatesIfNeeded();
+
+            if (!_fullPresetPreviewActive)
+            {
+                _fullPresetPreviewSnapshot = EditorJsonUtility.ToJson(targetFx);
+                _fullPresetPreviewTargetId = targetFx.GetInstanceID();
+                _fullPresetPreviewActive = true;
+            }
+            else
+            {
+                RestoreFullStackPresetPreviewSnapshot(clearState: false);
+            }
+
+            _previewedAssetLook = preset;
+            _suspendAutoProfileSync = true;
+            ApplyAssetLook(preset, previewOnly: true);
+            serializedObject.Update();
+            SceneView.RepaintAll();
+            Repaint();
+        }
+
+        private void ConfirmAndApplyAssetLook(CrowFXPresetAsset preset)
+        {
+            if (preset == null)
+            {
+                EditorUtility.DisplayDialog("CrowFX Preset", "The asset look is missing.", "OK");
+                return;
+            }
+            if (!preset.CanApply(out string reason))
+            {
+                EditorUtility.DisplayDialog("CrowFX Preset", reason, "OK");
+                return;
+            }
+
+            string label = GetAssetLookLabel(preset);
+            if (!EditorUtility.DisplayDialog("Apply CrowFX Look",
+                    $"Apply \"{label}\" at {_fullPresetAmount * 100f:0}% amount?\n\nThis replaces every CrowFX effect setting. The operation can be undone.",
+                    "Apply Look", "Cancel")) return;
+            RestoreFullStackPresetPreviewIfNeeded();
+            ApplyAssetLook(preset, previewOnly: false);
+        }
+
+        private void ApplyAssetLook(CrowFXPresetAsset preset, bool previewOnly)
+        {
+            var effect = (CrowImageEffects)target;
+            if (effect == null || preset == null) return;
+            if (!previewOnly)
+            {
+                RestorePreviewStatesIfNeeded();
+                Undo.RecordObject(effect, $"Apply {GetAssetLookLabel(preset)} Asset Look");
+            }
+
+            preset.ApplyTo(effect);
+            effect.masterBlend *= _fullPresetAmount;
+            EditorUtility.SetDirty(effect);
+            serializedObject.Update();
+            if (previewOnly) SceneView.RepaintAll();
+            else FinalizeCommittedTargetChange(effect);
+        }
+
+        private static string GetAssetLookLabel(CrowFXPresetAsset preset)
+            => preset == null ? "Asset Look" : string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
 
         private void DrawPresetsContent()
         {
             BeginSectionDrawn();
-            DrawDataDrivenPresetAssets();
             DrawFullStackPresetButtons();
         }
 
         private void SelectFullStackPreset(FullStackPreset preset)
         {
             _selectedFullStackPreset = preset;
+            _selectedLookIsAsset = false;
             EditorPrefs.SetInt(Pref_FullPresetSelection, (int)preset);
             if (_fullPresetPreviewActive)
             {
@@ -5081,6 +5438,7 @@ namespace CrowFX.EditorTools
             }
 
             _previewedFullStackPreset = preset;
+            _previewedAssetLook = null;
             _suspendAutoProfileSync = true;
             ApplyFullStackPreset(preset, displayName, previewOnly: true);
             serializedObject.Update();
@@ -5111,6 +5469,7 @@ namespace CrowFX.EditorTools
                 _fullPresetPreviewActive = false;
                 _fullPresetPreviewSnapshot = null;
                 _fullPresetPreviewTargetId = 0;
+                _previewedAssetLook = null;
                 _suspendAutoProfileSync = false;
             }
 
@@ -5155,7 +5514,7 @@ namespace CrowFX.EditorTools
             {
                 if (string.IsNullOrWhiteSpace(_fullPresetSearch))
                 {
-                    var category = FullStackPresetCategories[_fullPresetCategory];
+                    var category = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
                     CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
                     EditorGUILayout.LabelField(category.Hint, CrowFxEditorUI.Styles.HeaderHint);
                     GUILayout.Space(2);
@@ -5514,17 +5873,17 @@ namespace CrowFX.EditorTools
             switch (preset)
             {
                 case CompositePreset.CleanDecode:
-                    SetPresetFloat("compositeIntensity", 0.20f); SetPresetFloat("compositeDotCrawl", 0.025f); SetPresetFloat("compositeRainbow", 0.01f);
-                    SetPresetFloat("compositeChromaBandwidth", 0.90f); SetPresetFloat("compositePhaseError", 0.01f); SetPresetFloat("compositeCombFilter", 0.92f); break;
+                    SetPresetFloat("compositeIntensity", 0.35f); SetPresetFloat("compositeDotCrawl", 0.06f); SetPresetFloat("compositeRainbow", 0.025f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.88f); SetPresetFloat("compositePhaseError", 0.015f); SetPresetFloat("compositeCombFilter", 0.95f); break;
                 case CompositePreset.Broadcast:
-                    SetPresetFloat("compositeIntensity", 0.32f); SetPresetFloat("compositeDotCrawl", 0.06f); SetPresetFloat("compositeRainbow", 0.025f);
-                    SetPresetFloat("compositeChromaBandwidth", 0.75f); SetPresetFloat("compositePhaseError", 0.02f); SetPresetFloat("compositeCombFilter", 0.82f); break;
+                    SetPresetFloat("compositeIntensity", 0.55f); SetPresetFloat("compositeDotCrawl", 0.14f); SetPresetFloat("compositeRainbow", 0.07f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.70f); SetPresetFloat("compositePhaseError", 0.05f); SetPresetFloat("compositeCombFilter", 0.80f); break;
                 case CompositePreset.ConsumerCable:
-                    SetPresetFloat("compositeIntensity", 0.48f); SetPresetFloat("compositeDotCrawl", 0.16f); SetPresetFloat("compositeRainbow", 0.07f);
-                    SetPresetFloat("compositeChromaBandwidth", 0.48f); SetPresetFloat("compositePhaseError", 0.06f); SetPresetFloat("compositeCombFilter", 0.58f); break;
+                    SetPresetFloat("compositeIntensity", 0.75f); SetPresetFloat("compositeDotCrawl", 0.35f); SetPresetFloat("compositeRainbow", 0.20f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.42f); SetPresetFloat("compositePhaseError", 0.18f); SetPresetFloat("compositeCombFilter", 0.45f); break;
                 case CompositePreset.UnstableRf:
-                    SetPresetFloat("compositeIntensity", 0.68f); SetPresetFloat("compositeDotCrawl", 0.34f); SetPresetFloat("compositeRainbow", 0.20f);
-                    SetPresetFloat("compositeChromaBandwidth", 0.28f); SetPresetFloat("compositePhaseError", 0.18f); SetPresetFloat("compositeCombFilter", 0.24f); break;
+                    SetPresetFloat("compositeIntensity", 0.90f); SetPresetFloat("compositeDotCrawl", 0.65f); SetPresetFloat("compositeRainbow", 0.48f);
+                    SetPresetFloat("compositeChromaBandwidth", 0.18f); SetPresetFloat("compositePhaseError", 0.50f); SetPresetFloat("compositeCombFilter", 0.12f); break;
             }
         }
 
@@ -5836,6 +6195,9 @@ namespace CrowFX.EditorTools
         {
             var targetFx = (CrowImageEffects)target;
             if (targetFx == null) return;
+
+            if (TryApplyGeneratedLookAsset(targetFx, preset, displayName, previewOnly))
+                return;
 
             if (previewOnly)
                 RestoreSectionPreviewStatesIfNeeded();
@@ -6317,6 +6679,31 @@ namespace CrowFX.EditorTools
             {
                 DestroyImmediate(tmpGO);
             }
+        }
+
+        private bool TryApplyGeneratedLookAsset(CrowImageEffects targetFx, FullStackPreset preset, string displayName, bool previewOnly)
+        {
+            var asset = FindGeneratedLookAsset(preset);
+            if (asset == null || !asset.CanApply(out _)) return false;
+
+            if (previewOnly)
+                RestoreSectionPreviewStatesIfNeeded();
+            else
+            {
+                RestorePreviewStatesIfNeeded();
+                Undo.RecordObject(targetFx, $"Apply {displayName} Asset Look");
+            }
+
+            asset.ApplyTo(targetFx);
+            targetFx.masterBlend *= _fullPresetAmount;
+            EditorUtility.SetDirty(targetFx);
+            serializedObject.Update();
+
+            if (previewOnly)
+                SceneView.RepaintAll();
+            else
+                FinalizeCommittedTargetChange(targetFx);
+            return true;
         }
 
         private void ApplyExpandedFullStackPresetBase(FullStackPreset preset)

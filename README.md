@@ -133,8 +133,13 @@ Looks can be searched by name, purpose, or active-stage recipe. Preview is non-d
 ## Profiles and custom presets
 
 - `CrowFXProfile` stores the complete component configuration and can be live-synced across cameras.
-- `CrowFXPresetAsset` adds metadata such as description, usage tags, thumbnail, dependencies, strength, GPU tier, and schema version.
-- Use the component context menu **Create Data-Driven Preset** to capture a reusable preset/profile pair.
+- `CrowFXPresetAsset` adds metadata such as description, usage tags, dependencies, strength, GPU tier, and schema version.
+- To author a shareable preset, configure the `CrowImageEffects` controls, open **Presets > Look Library > Asset Looks**, and choose **Save Current**.
+- New project presets embed their complete profile in one `.asset`. Commit that `.asset`, its `.meta`, and any referenced texture assets to the repository.
+- Select any authored or custom look, apply it, polish the current controls, then choose **Update Asset from Current Controls** in its detail card. The embedded profile is recaptured while metadata and the asset GUID are preserved.
+- Saving inside `Assets/CrowFX-Unity-Image-Effects` warns when a texture dependency lives outside the repository folder.
+- Asset looks are displayed and searched inside the Look Library. Assets carrying a built-in source ID back the matching authored row, preserving the existing category, preview, favorite, and Apply workflow without creating duplicate entries.
+- The 88 authored looks are stored under `CrowFX/Presets`; their stable source IDs connect them to the existing Look Library categories and rows.
 
 ## Render order
 

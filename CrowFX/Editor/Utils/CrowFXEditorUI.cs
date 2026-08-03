@@ -89,6 +89,7 @@ namespace CrowFX.EditorTools
             public static GUIStyle Panel;
             public static GUIStyle HeaderLabel;
             public static GUIStyle HeaderHint;
+            public static GUIStyle RowDetail;
             public static GUIStyle SectionTitle;
             public static GUIStyle SummaryText;
             public static GUIStyle HintText;
@@ -135,6 +136,13 @@ namespace CrowFX.EditorTools
                     alignment = TextAnchor.MiddleRight,
                     richText  = true,
                     normal    = { textColor = Theme.TextSecondary }
+                };
+
+                RowDetail = new GUIStyle(HeaderHint)
+                {
+                    alignment = TextAnchor.UpperLeft,
+                    wordWrap = true,
+                    clipping = TextClipping.Clip
                 };
 
                 SectionTitle = new GUIStyle(EditorStyles.boldLabel)
@@ -214,6 +222,7 @@ namespace CrowFX.EditorTools
                 SummaryText.font    = font;
                 HintText.font       = font;
                 HeaderHint.font     = font;
+                RowDetail.font      = font;
                 PillButton.font     = font;
                 ResetButton.font    = font;
                 PopupLabel.font     = font;
@@ -240,6 +249,27 @@ namespace CrowFX.EditorTools
         {
             Styles.Ensure();
             if (font != null) Styles.ApplyFont(font);
+        }
+
+        internal static float CompactControlHeight(GUIStyle style, float minimum = 22f)
+        {
+            if (style == null) return minimum;
+            float measured = style.CalcHeight(new GUIContent("Ag"), 256f);
+            return Mathf.Max(minimum, Mathf.Ceil(measured + 6f));
+        }
+
+        internal static float ContentWidth(GUIStyle style, string text, float minimum = 0f)
+        {
+            if (style == null) return minimum;
+            return Mathf.Max(minimum, Mathf.Ceil(style.CalcSize(new GUIContent(text ?? "")).x + 8f));
+        }
+
+        internal static void WrappedLabel(string message, GUIStyle style)
+        {
+            var content = new GUIContent(message ?? "");
+            float width = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - 36f);
+            float height = Mathf.Max(CompactControlHeight(style), style.CalcHeight(content, width) + 4f);
+            EditorGUILayout.LabelField(content, style, GUILayout.Height(height), GUILayout.ExpandWidth(true));
         }
 
         internal static IDisposable PanelScope()
@@ -295,8 +325,10 @@ namespace CrowFX.EditorTools
         {
             var content = new GUIContent(message ?? "");
 
-            float labelWidth = EditorGUIUtility.currentViewWidth - 48f;
-            float height = Mathf.Max(18f, Styles.HintText.CalcHeight(content, labelWidth) + 6f);
+            // currentViewWidth includes the inspector chrome and any containing panel. Keep the
+            // estimate conservative so narrow/nested inspectors reserve every wrapped line.
+            float labelWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - 64f);
+            float height = Mathf.Max(CompactControlHeight(Styles.HintText), Styles.HintText.CalcHeight(content, labelWidth) + 10f);
 
             var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
             rect.xMin += 2f;
@@ -326,8 +358,12 @@ namespace CrowFX.EditorTools
         {
             var content = new GUIContent(message ?? "");
 
-            float labelWidth = Mathf.Max(120f, EditorGUIUtility.currentViewWidth - actionWidth - 64f);
-            float height = Mathf.Max(22f, Styles.HintText.CalcHeight(content, labelWidth) + 8f);
+            float desiredActionWidth = ContentWidth(Styles.PillButton, actionLabel, actionWidth);
+            float maxActionWidth = Mathf.Max(72f, EditorGUIUtility.currentViewWidth - 112f);
+            float resolvedActionWidth = Mathf.Min(desiredActionWidth, maxActionWidth);
+            float labelWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - resolvedActionWidth - 76f);
+            float buttonHeight = CompactControlHeight(Styles.PillButton);
+            float height = Mathf.Max(buttonHeight + 8f, Styles.HintText.CalcHeight(content, labelWidth) + 12f);
 
             var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
             rect.xMin += 2f;
@@ -346,7 +382,7 @@ namespace CrowFX.EditorTools
                 Theme.DrawBorder(rect);
             }
 
-            var buttonRect = new Rect(rect.xMax - actionWidth - 6f, rect.y + 3f, actionWidth, rect.height - 6f);
+            var buttonRect = new Rect(rect.xMax - resolvedActionWidth - 6f, rect.y + (rect.height - buttonHeight) * 0.5f, resolvedActionWidth, buttonHeight);
             var labelRect = new Rect(rect.x + 6f, rect.y + 4f, Mathf.Max(40f, buttonRect.x - rect.x - 12f), rect.height - 8f);
 
             var prev = GUI.contentColor;
@@ -366,11 +402,11 @@ namespace CrowFX.EditorTools
         // PILLS
         // =============================================================================================
         internal static bool MiniPill(string label, params GUILayoutOption[] options)
-            => PillButton(label, 18f, Styles.PillButton, options);
+            => PillButton(label, CompactControlHeight(Styles.PillButton), Styles.PillButton, options);
 
         internal static bool SelectionPill(string label, bool selected, string tooltip = null, params GUILayoutOption[] options)
         {
-            var rect = GUILayoutUtility.GetRect(0f, 20f, options);
+            var rect = GUILayoutUtility.GetRect(0f, CompactControlHeight(Styles.PillButton), options);
             return DrawPill(rect, label ?? "", Styles.PillButton, clickable: true, tooltip: tooltip,
                 tint: selected ? Theme.ButtonActive : (Color?)null);
         }
@@ -385,17 +421,18 @@ namespace CrowFX.EditorTools
 
         internal static int ThemedPopup(string key, int current, string[] options, params GUILayoutOption[] layoutOptions)
         {
-            var rect = GUILayoutUtility.GetRect(0f, 20f, layoutOptions);
+            var rect = GUILayoutUtility.GetRect(0f, CompactControlHeight(Styles.PopupValue), layoutOptions);
             return ThemedPopup(rect, key, current, options);
         }
 
         internal static int ThemedPopup(string key, GUIContent label, int current, string[] options)
         {
-            var rect = EditorGUILayout.GetControlRect(false, 22f);
+            float controlHeight = Mathf.Max(CompactControlHeight(Styles.PopupLabel), CompactControlHeight(Styles.PopupValue));
+            var rect = EditorGUILayout.GetControlRect(false, controlHeight);
             var indentedRect = EditorGUI.IndentedRect(rect);
             float labelWidth = Mathf.Clamp(EditorGUIUtility.labelWidth, 72f, Mathf.Max(72f, indentedRect.width - 124f));
-            var labelRect = new Rect(indentedRect.x, indentedRect.y + 2f, Mathf.Max(40f, labelWidth - 4f), EditorGUIUtility.singleLineHeight);
-            var fieldRect = new Rect(labelRect.xMax + 4f, indentedRect.y + 2f, Mathf.Max(40f, indentedRect.xMax - labelRect.xMax - 4f), EditorGUIUtility.singleLineHeight);
+            var labelRect = new Rect(indentedRect.x, indentedRect.y, Mathf.Max(40f, labelWidth - 4f), controlHeight);
+            var fieldRect = new Rect(labelRect.xMax + 4f, indentedRect.y, Mathf.Max(40f, indentedRect.xMax - labelRect.xMax - 4f), controlHeight);
             EditorGUI.LabelField(labelRect, label ?? GUIContent.none, Styles.PopupLabel);
             return ThemedPopup(fieldRect, key, current, options);
         }
@@ -519,9 +556,9 @@ namespace CrowFX.EditorTools
 
         private sealed class ThemedPopupWindow : PopupWindowContent
         {
-            private const float RowHeight = 22f;
             private const float Padding = 2f;
             private const double AnimationDuration = 0.12;
+            private static float RowHeight => CompactControlHeight(Styles.PopupValue);
 
             private string _key;
             private string[] _options = Array.Empty<string>();
@@ -674,7 +711,7 @@ namespace CrowFX.EditorTools
         }
 
         internal static bool ResetPill(string label, params GUILayoutOption[] options)
-            => PillButton(label, 18f, Styles.ResetButton, options);
+            => PillButton(label, CompactControlHeight(Styles.ResetButton), Styles.ResetButton, options);
 
         internal static bool PillButton(string label, float height, GUIStyle style, params GUILayoutOption[] options)
         {
@@ -684,7 +721,7 @@ namespace CrowFX.EditorTools
 
         internal static void TagPill(string label, Color? tint = null, params GUILayoutOption[] options)
         {
-            var rect = GUILayoutUtility.GetRect(0f, 18f, options);
+            var rect = GUILayoutUtility.GetRect(0f, CompactControlHeight(Styles.PillButton), options);
             DrawPill(rect, label ?? "", Styles.PillButton, clickable: false, tint: tint);
         }
 

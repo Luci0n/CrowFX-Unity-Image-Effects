@@ -80,6 +80,7 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
 
             float _ClampUV;
             sampler2D _NoiseTex;
+            float4 _NoiseTex_TexelSize;
 
             float _PixelSize;
             float _UseVirtualGrid;
@@ -117,6 +118,23 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
             {
                 float n = hash21(p);
                 return float2(n, hash21(p + 17.17));
+            }
+
+            // Address a new, decorrelated blue-noise tile each frame.  Continuous UV
+            // translation makes the texture visibly slide across the picture; a random
+            // dihedral transform plus an integer texel offset retains the distribution
+            // without giving the eye a motion vector to follow.
+            float2 blueNoiseUV(float2 uv, float frame, float seed)
+            {
+                float2 size = max(_NoiseTex_TexelSize.zw, 1.0);
+                float2 p = floor(uv * size);
+                float transform = floor(hash21(float2(frame + seed, 41.73)) * 8.0);
+                if (fmod(transform, 2.0) > 0.5) p = p.yx;
+                if (fmod(floor(transform * 0.5), 2.0) > 0.5) p.x = size.x - 1.0 - p.x;
+                if (transform > 3.5) p.y = size.y - 1.0 - p.y;
+                float2 offset = floor(hash22(float2(frame + seed, 97.11)) * size);
+                p = fmod(p + offset + size, size);
+                return (p + 0.5) / size;
             }
 
             float2 getBaseTexelSize()
@@ -235,7 +253,8 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 else
                 {
                     float k = (_UseSeed > 0.5) ? _Seed : 0.0;
-                    float2 nuv = frac(uv * 8.0 + float2(0.01, 0.013) * (t * _JitterSpeed) + k * 0.001);
+                    float frame = floor(t * max(_JitterSpeed, 0.01));
+                    float2 nuv = blueNoiseUV(frac(uv * 8.0), frame, k);
                     float2 r = tex2D(_NoiseTex, nuv).rg * 2.0 - 1.0;
                     return r * ampPx * texel;
                 }

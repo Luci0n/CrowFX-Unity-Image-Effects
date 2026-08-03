@@ -18,8 +18,11 @@ Shader "Hidden/CrowFX/Stages/Dithering"
 
         _DitherMode ("Dither Mode", Float) = 0
         _DitherStrength ("Dither Strength", Range(0,1)) = 0
+        _DitherSize ("Dither Pattern Size", Range(1,16)) = 1
         _DitherAngle ("Dither Angle", Range(0,180)) = 45
         _BlueNoise ("Blue Noise (128x128)", 2D) = "gray" {}
+        _HalftoneAreaModulation ("Halftone Area-Modulated Dots", Float) = 0
+        _HalftoneColorMode ("Halftone Color Separation", Float) = 0
 
         _PixelSize ("Pixel Size", Float) = 1
         _UseVirtualGrid ("Use Virtual Grid", Float) = 0
@@ -46,11 +49,11 @@ Shader "Hidden/CrowFX/Stages/Dithering"
             float _Levels, _LevelsR, _LevelsG, _LevelsB, _UsePerChannel, _LuminanceOnly;
             float _AnimateLevels, _MinLevels, _MaxLevels, _Speed;
 
-            float _DitherMode, _DitherStrength;
+            float _DitherMode, _DitherStrength, _DitherSize;
             float _DitherAngle;
             sampler2D _BlueNoise;
             float4 _BlueNoise_TexelSize;
-            float _TemporalDither, _TemporalDitherRate, _HalftoneScale, _HalftoneDotGain;
+            float _TemporalDither, _TemporalDitherRate, _HalftoneScale, _HalftoneDotGain, _HalftoneAreaModulation, _HalftoneColorMode;
 
             float _PixelSize;
             float _UseVirtualGrid;
@@ -82,20 +85,44 @@ Shader "Hidden/CrowFX/Stages/Dithering"
             inline float D4(int2 p) { p = p & int2(3,3); return bayer4[p.y*4 + p.x]; }
             inline float D8(int2 p) { p = p & int2(7,7); return bayer8[p.y*8 + p.x]; }
 
+            inline uint DHash(uint x)
+            {
+                x ^= x >> 16u;
+                x *= 0x7feb352du;
+                x ^= x >> 15u;
+                x *= 0x846ca68bu;
+                return x ^ (x >> 16u);
+            }
+
+            inline int DTemporalFrame()
+            {
+                return (_TemporalDither > 0.5) ? (int)floor(_Time.y * _TemporalDitherRate) : 0;
+            }
+
             inline float DNoise(int2 p)
             {
-                uint2 up = (uint2)uint2((uint)abs(p.x), (uint)abs(p.y));
-                uint h = up.x * 1103515245u + up.y * 12345u;
-                h = (h >> 13u) ^ h;
-                h = h * 1103515245u + 12345u;
-                return frac((float)h * 2.3283064e-10);
+                // Frame id is mixed as an independent hash component.  This regenerates
+                // the threshold field instead of translating a fixed 2D noise pattern.
+                uint x = (uint)p.x;
+                uint y = (uint)p.y;
+                uint frame = (uint)DTemporalFrame();
+                uint h = DHash(x + 0x9e3779b9u);
+                h ^= DHash(y + 0x85ebca6bu);
+                h ^= DHash(frame + 0xc2b2ae35u);
+                return (float)DHash(h) * 2.3283064365386963e-10;
             }
 
             inline float DBlue(int2 p)
             {
-                int frame = (_TemporalDither > 0.5) ? (int)floor(_Time.y * _TemporalDitherRate) : 0;
+                int frame = DTemporalFrame();
                 int2 size = max((int2)_BlueNoise_TexelSize.zw, int2(1, 1));
-                int2 pp = int2((p.x + frame * 37) % size.x, (p.y + frame * 17) % size.y);
+                uint h = DHash((uint)frame + 0x9e3779b9u);
+                int2 pp = p;
+                if ((h & 1u) != 0u) pp = pp.yx;
+                if ((h & 2u) != 0u) pp.x = size.x - 1 - pp.x;
+                if ((h & 4u) != 0u) pp.y = size.y - 1 - pp.y;
+                pp += int2((int)(h % (uint)size.x), (int)(DHash(h) % (uint)size.y));
+                pp = int2(pp.x % size.x, pp.y % size.y);
                 pp += int2(pp.x < 0 ? size.x : 0, pp.y < 0 ? size.y : 0);
                 float2 uv = (float2(pp) + 0.5) / float2(size);
                 return tex2D(_BlueNoise, uv).r;
@@ -114,6 +141,35 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 float2 local = frac(Rotate2D(gridPos, radians(angle)) / cellSize) - 0.5;
                 float dist = length(local);
                 return saturate(pow(saturate(1.0 - dist / 0.5), 1.35) + _HalftoneDotGain);
+            }
+
+            // Clustered-dot screen rank: 0 at a dot center, 0.5 where adjacent
+            // cells meet, and 1 at the four-cell junction. Thresholding this by
+            // ink coverage produces isolated highlight dots, connected shadow
+            // ink, and shrinking paper-colored holes above the midtone.
+            inline float HalftoneAreaRank(float2 gridPos, float angle)
+            {
+                float cellSize = max(_HalftoneScale, 2.0);
+                float2 local = frac(Rotate2D(gridPos, radians(angle)) / cellSize) - 0.5;
+                return saturate(2.0 * dot(local, local));
+            }
+
+            inline float HalftoneCoverageMask(float coverage, float rank)
+            {
+                coverage = saturate(coverage);
+                // Dot gain changes ink that exists on a plate; it must not invent
+                // cyan/magenta/yellow specks where that separation has zero ink.
+                if (coverage <= 0.0) return 0.0;
+                coverage = saturate(coverage + _HalftoneDotGain);
+                float antialiasWidth = max(fwidth(rank), 0.002);
+                if (coverage <= 0.0) return 0.0;
+                if (coverage >= 1.0) return 1.0;
+                return 1.0 - smoothstep(coverage - antialiasWidth, coverage + antialiasWidth, rank);
+            }
+
+            inline float HalftoneInkMask(float reflectance, float rank)
+            {
+                return HalftoneCoverageMask(1.0 - reflectance, rank);
             }
 
             inline float DLinear(float2 gridPos)
@@ -139,6 +195,63 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 int2 pix = (int2)floor(gridPos);
 
                 int mode = (int)(_DitherMode + 0.5);
+                float3 scaled = rgb * (levels - 1.0);
+
+                if (mode == 6 && _HalftoneAreaModulation > 0.5)
+                {
+                    float3 posterized = clamp(floor(scaled + 0.5), 0.0, levels - 1.0) / (levels - 1.0);
+                    int colorMode = (int)(_HalftoneColorMode + 0.5);
+                    float3 screened;
+
+                    if (colorMode == 1)
+                    {
+                        // Convert RGB to under-color-removed CMYK, screen each ink
+                        // at a conventional print angle, then mix the inks
+                        // subtractively on white paper.
+                        float blackCoverage = 1.0 - max(posterized.r, max(posterized.g, posterized.b));
+                        float colorRange = max(1.0 - blackCoverage, 0.0001);
+                        float3 cmyCoverage = saturate((1.0 - posterized - blackCoverage) / colorRange);
+                        if (blackCoverage >= 0.9999)
+                            cmyCoverage = 0.0;
+
+                        float cyanInk = HalftoneCoverageMask(cmyCoverage.x, HalftoneAreaRank(gridPos, 15.0));
+                        float magentaInk = HalftoneCoverageMask(cmyCoverage.y, HalftoneAreaRank(gridPos, 75.0));
+                        float yellowInk = HalftoneCoverageMask(cmyCoverage.z, HalftoneAreaRank(gridPos, 0.0));
+                        float blackInk = HalftoneCoverageMask(blackCoverage, HalftoneAreaRank(gridPos, 45.0));
+
+                        screened = 1.0;
+                        screened *= lerp(float3(1.0, 1.0, 1.0), float3(0.06, 0.80, 0.86), cyanInk);
+                        screened *= lerp(float3(1.0, 1.0, 1.0), float3(0.88, 0.06, 0.70), magentaInk);
+                        screened *= lerp(float3(1.0, 1.0, 1.0), float3(0.97, 0.88, 0.08), yellowInk);
+                        screened *= lerp(float3(1.0, 1.0, 1.0), float3(0.055, 0.05, 0.045), blackInk);
+                    }
+                    else if (colorMode == 2)
+                    {
+                        // Deliberately vivid additive RGB rosette. This preserves
+                        // the former halftone appearance as an explicit option.
+                        float3 rank = float3(
+                            HalftoneAreaRank(gridPos, 15.0),
+                            HalftoneAreaRank(gridPos, 75.0),
+                            HalftoneAreaRank(gridPos, 0.0));
+                        float3 ink = float3(
+                            HalftoneInkMask(posterized.r, rank.r),
+                            HalftoneInkMask(posterized.g, rank.g),
+                            HalftoneInkMask(posterized.b, rank.b));
+                        screened = 1.0 - ink;
+                    }
+                    else
+                    {
+                        // A single luminance-driven screen avoids colored channel
+                        // fringes while retaining a restrained trace of source hue.
+                        float luminance = CrowFX_Luma(posterized);
+                        float ink = HalftoneInkMask(luminance, HalftoneAreaRank(gridPos, 45.0));
+                        float3 inkTint = saturate(posterized / max(luminance, 0.001)) * 0.10;
+                        screened = lerp(float3(1.0, 1.0, 1.0), inkTint, ink);
+                    }
+
+                    return lerp(posterized, screened, saturate(_DitherStrength));
+                }
+
                 float thr = 0.5;
                 if (mode == 1) thr = D2(pix);
                 else if (mode == 2) thr = D4(pix);
@@ -148,8 +261,6 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 else if (mode == 6) thr = DHalftone(gridPos, 45.0);
                 else if (mode == 7) thr = DLinear(gridPos);
                 else if (mode == 8) thr = DDiamond(gridPos);
-
-                float3 scaled = rgb * (levels - 1.0);
 
                 if (_DitherStrength > 0.0)
                 {
@@ -181,7 +292,7 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 if (_UsePerChannel > 0.5)
                     perChLevels = float3(_LevelsR, _LevelsG, _LevelsB);
 
-                float pxBlock = max(_PixelSize, 1.0);
+                float pxBlock = max(_PixelSize, 1.0) * max(_DitherSize, 1.0);
                 float2 gridPos = uv * (CrowFX_GetBaseResolution(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize) / pxBlock);
 
                 float3 quant;
