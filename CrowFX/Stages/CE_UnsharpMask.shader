@@ -26,12 +26,14 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
 
             float _UnsharpEnabled, _UnsharpAmount, _UnsharpRadius, _UnsharpThreshold;
@@ -50,15 +52,15 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
             float3 Blur3x3(float2 uv, float2 texelStep, out float3 localMin, out float3 localMax)
             {
                 float2 o = texelStep;
-                float3 c  = tex2D(_MainTex, uv).rgb;
-                float3 r  = tex2D(_MainTex, uv + float2( o.x,  0)).rgb;
-                float3 l  = tex2D(_MainTex, uv + float2(-o.x,  0)).rgb;
-                float3 u  = tex2D(_MainTex, uv + float2( 0,   o.y)).rgb;
-                float3 d  = tex2D(_MainTex, uv + float2( 0,  -o.y)).rgb;
-                float3 ru = tex2D(_MainTex, uv + float2( o.x,  o.y)).rgb;
-                float3 lu = tex2D(_MainTex, uv + float2(-o.x,  o.y)).rgb;
-                float3 rd = tex2D(_MainTex, uv + float2( o.x, -o.y)).rgb;
-                float3 ld = tex2D(_MainTex, uv + float2(-o.x, -o.y)).rgb;
+                float3 c  = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
+                float3 r  = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2( o.x,  0)).rgb;
+                float3 l  = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2(-o.x,  0)).rgb;
+                float3 u  = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2( 0,   o.y)).rgb;
+                float3 d  = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2( 0,  -o.y)).rgb;
+                float3 ru = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2( o.x,  o.y)).rgb;
+                float3 lu = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2(-o.x,  o.y)).rgb;
+                float3 rd = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2( o.x, -o.y)).rgb;
+                float3 ld = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2(-o.x, -o.y)).rgb;
 
                 localMin = min(c, min(min(r, l), min(u, d)));
                 localMin = min(localMin, min(min(ru, lu), min(rd, ld)));
@@ -69,10 +71,10 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
 
             float3 ContrastAdaptive(float2 uv, float2 texelStep, float3 col)
             {
-                float3 r = tex2D(_MainTex, uv + float2(texelStep.x, 0)).rgb;
-                float3 l = tex2D(_MainTex, uv - float2(texelStep.x, 0)).rgb;
-                float3 u = tex2D(_MainTex, uv + float2(0, texelStep.y)).rgb;
-                float3 d = tex2D(_MainTex, uv - float2(0, texelStep.y)).rgb;
+                float3 r = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2(texelStep.x, 0)).rgb;
+                float3 l = CROWFX_SAMPLE_SCREEN(_MainTex, uv - float2(texelStep.x, 0)).rgb;
+                float3 u = CROWFX_SAMPLE_SCREEN(_MainTex, uv + float2(0, texelStep.y)).rgb;
+                float3 d = CROWFX_SAMPLE_SCREEN(_MainTex, uv - float2(0, texelStep.y)).rgb;
                 float3 localMin = min(col, min(min(r, l), min(u, d)));
                 float3 localMax = max(col, max(max(r, l), max(u, d)));
                 float3 detail = col - (r + l + u + d) * 0.25;
@@ -89,10 +91,11 @@ Shader "Hidden/CrowFX/Stages/UnsharpMask"
                 return clamp(sharpened, localMin - haloRoom, localMax + haloRoom);
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
-                float3 col = tex2D(_MainTex, uv).rgb;
+                float3 col = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
 
                 if (_UnsharpEnabled < 0.5 || _UnsharpAmount <= 0.0)
                     return float4(col, 1);

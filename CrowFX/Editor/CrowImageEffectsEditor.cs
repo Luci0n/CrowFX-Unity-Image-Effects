@@ -13,6 +13,7 @@ using SectionKeys = CrowFX.Helpers.CrowFXSectionKeys;
 namespace CrowFX.EditorTools
 {
     [CustomEditor(typeof(CrowImageEffects))]
+    [CanEditMultipleObjects]
     public sealed class CrowImageEffectsEditor : Editor
     {
         // =============================================================================================
@@ -26,6 +27,10 @@ namespace CrowFX.EditorTools
         private readonly List<CrowFxSectionsModel.SectionDef> _sections = new();
         private static readonly List<CrowFXPresetAsset> DataDrivenPresets = new();
         private static double _nextPresetAssetRefresh;
+
+        // Recipes are derived by walking a preset's profile, which is far too much work to redo
+        // for every row on every repaint. Cleared whenever the asset list is rebuilt.
+        private static readonly Dictionary<FullStackPreset, string> _presetRecipeCache = new();
         private readonly struct EnabledScope : IDisposable
         {
             private readonly bool _previousState;
@@ -43,6 +48,8 @@ namespace CrowFX.EditorTools
             public float FloatPreviewValue;
             public int IntOriginalValue;
             public int IntPreviewValue;
+            public AnimationCurve CurveOriginalValue;
+            public AnimationCurve CurvePreviewValue;
         }
 
         private readonly struct SummaryPill
@@ -163,15 +170,13 @@ namespace CrowFX.EditorTools
 
         private sealed class FullStackPresetCategory
         {
-            public readonly string ShortLabel;
             public readonly string Title;
             public readonly string Hint;
             public readonly Color Tint;
             public readonly FullStackPresetEntry[] Entries;
 
-            public FullStackPresetCategory(string shortLabel, string title, string hint, Color tint, params FullStackPresetEntry[] entries)
+            public FullStackPresetCategory(string title, string hint, Color tint, params FullStackPresetEntry[] entries)
             {
-                ShortLabel = shortLabel;
                 Title = title;
                 Hint = hint;
                 Tint = tint;
@@ -181,57 +186,57 @@ namespace CrowFX.EditorTools
 
         private static readonly FullStackPresetCategory[] FullStackPresetCategories =
         {
-            new("CLEAN", "CLEAN & PRODUCTION", "Finishing, clarity, and restrained grading.", new Color(0.32f, 0.68f, 0.58f, 0.24f),
+            new("CLEAN & PRODUCTION", "Finishing, clarity, and restrained grading.", new Color(0.32f, 0.68f, 0.58f, 0.24f),
                 new("Clean Retro", FullStackPreset.CleanRetro), new("Clean Digital", FullStackPreset.CleanDigital),
                 new("Soft Cinematic", FullStackPreset.SoftCinematic), new("Sharp Gameplay", FullStackPreset.SharpGameplay),
                 new("Muted Documentary", FullStackPreset.MutedDocumentary), new("Neutral Editorial", FullStackPreset.NeutralEditorial),
                 new("Product Showcase", FullStackPreset.ProductShowcase), new("Soft Portrait", FullStackPreset.SoftPortrait)),
-            new("PIXEL", "PIXEL & HANDHELD", "Fixed grids, limited levels, and display persistence.", new Color(0.38f, 0.58f, 0.88f, 0.24f),
+            new("PIXEL & HANDHELD", "Fixed grids, limited levels, and display persistence.", new Color(0.38f, 0.58f, 0.88f, 0.24f),
                 new("16-bit Console", FullStackPreset.RetroConsole), new("Retro Handheld", FullStackPreset.RetroHandheld),
                 new("Pixel Dither", FullStackPreset.PixelDither), new("Pocket RPG", FullStackPreset.PocketRpg),
                 new("Mono Handheld", FullStackPreset.MonochromeHandheld), new("DOS VGA", FullStackPreset.DosVga),
                 new("E-Ink Reader", FullStackPreset.EinkReader), new("Microconsole LCD", FullStackPreset.MicroconsoleLcd)),
-            new("CRT", "CRT DISPLAYS", "Consumer tubes, arcade masks, PVMs, and terminals.", new Color(0.45f, 0.68f, 0.92f, 0.24f),
+            new("CRT DISPLAYS", "Consumer tubes, arcade masks, PVMs, and terminals.", new Color(0.45f, 0.68f, 0.92f, 0.24f),
                 new("Soft Consumer CRT", FullStackPreset.SoftConsumerCrt), new("Arcade Cabinet", FullStackPreset.ArcadeCabinet),
                 new("Broadcast PVM", FullStackPreset.BroadcastPvm), new("Green Terminal", FullStackPreset.GreenTerminal),
                 new("Amber Terminal", FullStackPreset.AmberTerminal), new("Aperture Grille HD", FullStackPreset.ApertureGrilleHd),
                 new("Vector Display", FullStackPreset.VectorDisplay), new("Laboratory Scope", FullStackPreset.MonochromeLabScope)),
-            new("VHS", "VHS & TAPE", "Clean recordings through severe tape damage.", new Color(0.78f, 0.52f, 0.30f, 0.24f),
+            new("VHS & TAPE", "Clean recordings through severe tape damage.", new Color(0.78f, 0.52f, 0.30f, 0.24f),
                 new("Clean VHS", FullStackPreset.CleanVhs), new("Rental VHS", FullStackPreset.RentalVhs),
                 new("90s Camcorder", FullStackPreset.Camcorder90s), new("Home Movie", FullStackPreset.HomeMovie),
                 new("Damaged Tape", FullStackPreset.DamagedTape), new("S-VHS Master", FullStackPreset.SvhsMaster),
                 new("EP Long Play", FullStackPreset.EpLongPlay), new("Public Access Dub", FullStackPreset.PublicAccessDub)),
-            new("PRINT", "PRINT & ILLUSTRATION", "Color comics, newsprint, noir, and screentone.", new Color(0.72f, 0.64f, 0.42f, 0.24f),
+            new("PRINT & ILLUSTRATION", "Color comics, newsprint, noir, and screentone.", new Color(0.72f, 0.64f, 0.42f, 0.24f),
                 new("Graphic Novel", FullStackPreset.GraphicNovel), new("Posterized Noir", FullStackPreset.PosterizedNoir),
                 new("Color Newsprint", FullStackPreset.NewspaperHalftone), new("Manga Ink", FullStackPreset.MangaInk),
                 new("Color Comic", FullStackPreset.TwoToneComic), new("Risograph Duotone", FullStackPreset.RisographDuotone),
                 new("Pulp Color", FullStackPreset.PulpColor), new("Blueprint Lines", FullStackPreset.BlueprintLines)),
-            new("GLITCH", "DIGITAL & GLITCH", "Desync, LCD response, quantization, and corruption.", new Color(0.70f, 0.38f, 0.78f, 0.24f),
+            new("DIGITAL & GLITCH", "Desync, LCD response, quantization, and corruption.", new Color(0.70f, 0.38f, 0.78f, 0.24f),
                 new("Digital Glitch", FullStackPreset.DigitalGlitch), new("Low-fi LCD", FullStackPreset.LowFiLcd),
                 new("Signal Desync", FullStackPreset.SignalDesync), new("Broken LCD", FullStackPreset.BrokenLcd),
                 new("Compression Pop", FullStackPreset.CompressionPop), new("Packet Loss", FullStackPreset.PacketLoss),
                 new("Data Bend", FullStackPreset.DataBend), new("Buffer Collapse", FullStackPreset.BufferCollapse)),
-            new("DREAM", "DREAM & MUSIC VIDEO", "Rotoscope, fisheye, monochrome stagecraft, neon, datamosh, and surreal pop.", new Color(0.86f, 0.40f, 0.66f, 0.24f),
+            new("DREAM & MUSIC VIDEO", "Rotoscope, fisheye, monochrome stagecraft, neon, datamosh, and surreal pop.", new Color(0.86f, 0.40f, 0.66f, 0.24f),
                 new("Rotoscope Sketch", FullStackPreset.ChromaticDream), new("Neon Night Drive", FullStackPreset.NeonTrails),
                 new("Color-Block Pop", FullStackPreset.PastelMemory), new("Fisheye Couture", FullStackPreset.MusicVideoGlow),
                 new("Datamosh Cut", FullStackPreset.FrozenEcho), new("Stop-Motion Pop", FullStackPreset.PrismMemory),
                 new("Monochrome Stage", FullStackPreset.InfraredDream), new("Mythic VFX", FullStackPreset.AuroraFeedback)),
-            new("WATCH", "SURVEILLANCE & BROADCAST", "Monitoring, news, cable, night, and inverted scopes.", new Color(0.38f, 0.72f, 0.48f, 0.24f),
+            new("SURVEILLANCE & BROADCAST", "Monitoring, news, cable, night, and inverted scopes.", new Color(0.38f, 0.72f, 0.48f, 0.24f),
                 new("Security Monitor", FullStackPreset.SecurityMonitor), new("Broadcast News", FullStackPreset.BroadcastNews),
                 new("Cable Access", FullStackPreset.CableAccess), new("Night Vision", FullStackPreset.NightVision),
                 new("Inverted Scope", FullStackPreset.ThermalScope), new("Bodycam Evidence", FullStackPreset.BodycamEvidence),
                 new("Drone Telemetry", FullStackPreset.DroneTelemetry), new("Archive Newsreel", FullStackPreset.ArchiveNewsreel)),
-            new("HORROR", "HORROR & DISTRESS", "Analog, spectral, emergency, and digital damage.", new Color(0.78f, 0.30f, 0.32f, 0.24f),
+            new("HORROR & DISTRESS", "Analog, spectral, emergency, and digital damage.", new Color(0.78f, 0.30f, 0.32f, 0.24f),
                 new("Analog Horror", FullStackPreset.AnalogHorror), new("Found Footage", FullStackPreset.FoundFootage),
                 new("Haunted Monitor", FullStackPreset.HauntedMonitor), new("Emergency Signal", FullStackPreset.EmergencySignal),
                 new("Corrupted Memory", FullStackPreset.CorruptedMemory), new("Sodium Basement", FullStackPreset.SodiumBasement),
                 new("EVP Recorder", FullStackPreset.EvpRecorder), new("Biohazard Feed", FullStackPreset.BiohazardFeed)),
-            new("COLOR", "COLOR & EXPERIMENTAL", "Creative separation and photochemical-inspired grades.", new Color(0.38f, 0.72f, 0.82f, 0.24f),
+            new("COLOR & EXPERIMENTAL", "Creative separation and photochemical-inspired grades.", new Color(0.38f, 0.72f, 0.82f, 0.24f),
                 new("Psychedelic Fringe", FullStackPreset.PsychedelicFringe), new("Bleach Bypass", FullStackPreset.BleachBypass),
                 new("Color Pop", FullStackPreset.ColorPop), new("Blue Mood", FullStackPreset.BlueMood),
                 new("Warm Nostalgia", FullStackPreset.WarmNostalgia), new("Cross Process", FullStackPreset.CrossProcess),
                 new("Solarized Chrome", FullStackPreset.SolarizedChrome), new("Anaglyph Pulse", FullStackPreset.AnaglyphPulse)),
-            new("RESEARCH", "RESEARCH & ANALYSIS", "Inspection, visualization, stress testing, and accessibility studies.", new Color(0.30f, 0.72f, 0.68f, 0.24f),
+            new("RESEARCH & ANALYSIS", "Inspection, visualization, stress testing, and accessibility studies.", new Color(0.30f, 0.72f, 0.68f, 0.24f),
                 new("Luma Inspection", FullStackPreset.LumaInspection), new("Edge Survey", FullStackPreset.EdgeSurvey),
                 new("Chroma Alignment", FullStackPreset.ChromaAlignment), new("Motion Persistence", FullStackPreset.MotionPersistence),
                 new("Compression Stress", FullStackPreset.CompressionStress), new("Low-light Recovery", FullStackPreset.LowLightRecovery),
@@ -249,6 +254,11 @@ namespace CrowFX.EditorTools
         }
 
         private static int AssetLookCategoryIndex => FullStackPresetCategories.Length;
+
+        /// <summary>Browses every authored category at once, grouped under collapsible headers.
+        /// Appended after the existing entries rather than placed first so previously stored
+        /// category indices keep pointing at the same category.</summary>
+        private static int AllLooksCategoryIndex => FullStackPresetCategories.Length + 1;
 
         // Custom UI extras
         private AnimBool _foldResolutionPresets;
@@ -282,6 +292,8 @@ namespace CrowFX.EditorTools
         private const string Pref_FullPresetSelection = "CrowImageEffectsEditor.FullPresets.Selection";
         private const string Pref_FullPresetAmount = "CrowImageEffectsEditor.FullPresets.Amount";
         private const string Pref_FullPresetFavorites = "CrowImageEffectsEditor.FullPresets.Favorites";
+        private const string Pref_FullPresetCollapsedGroups = "CrowImageEffectsEditor.FullPresets.CollapsedGroups";
+        private const string Pref_AssetLookFavorites = "CrowImageEffectsEditor.FullPresets.AssetFavorites";
         private const string Pref_FullPresetFavoritesOnly = "CrowImageEffectsEditor.FullPresets.FavoritesOnly";
         private string _search = "";
         private string _fullPresetSearch = "";
@@ -292,6 +304,34 @@ namespace CrowFX.EditorTools
         private float _fullPresetAmount = 0.85f;
         private bool _fullPresetFavoritesOnly;
         private readonly HashSet<FullStackPreset> _favoriteFullStackPresets = new();
+
+        // Category indices collapsed in the All Looks view. Empty means everything is expanded,
+        // which is the default so "all looks" genuinely shows all of them on first open.
+        private readonly HashSet<int> _collapsedLookGroups = new();
+
+        // Bookmarked custom asset looks, keyed by asset GUID so renaming or moving the asset
+        // does not silently drop the bookmark.
+        private readonly HashSet<string> _favoriteAssetLooks = new();
+
+        // Whether the custom asset selection is the one the Look Library should currently reflect.
+        // Recomputed before the browser draws, and read by both row kinds and the detail card so
+        // the highlight and the card can never disagree about what is selected.
+        private bool _assetLookSelectionActive;
+
+        // Width the summary pill rows were wrapped against during the last Layout pass.
+        private float _summaryPillLayoutWidth;
+
+        // Sections whose explanatory hints are switched ON, via the "?" button in each header.
+        // Stored as an opt-in set so the default of an empty set is notes off everywhere, leaving
+        // the inspector to its controls until help is asked for. Warnings, errors and action
+        // hints are never affected.
+        private const string Pref_ShownSectionHints = "CrowImageEffectsEditor.ShownSectionHints";
+        private readonly HashSet<string> _shownSectionHints = new(StringComparer.Ordinal);
+
+        // Snapshot taken during Layout. Clicking "?" mutates the live set mid-frame, and reading
+        // it directly afterwards would let Repaint draw a different number of hint panels than
+        // Layout reserved space for, which aborts the repaint.
+        private readonly HashSet<string> _shownSectionHintsThisFrame = new(StringComparer.Ordinal);
 
         private static string _rootFromThisScript;
 
@@ -383,10 +423,16 @@ namespace CrowFX.EditorTools
         private FullStackPreset _previewedFullStackPreset;
         private CrowFXPresetAsset _previewedAssetLook;
 
+        // Every section listed here shows Solo and Mute buttons, so every section listed here MUST
+        // have a case in both CaptureNeutralPreviewOverrides and CaptureActivePreviewOverrides.
+        // A missing case makes the section silently immune to Solo: it keeps rendering while
+        // everything else is muted, which is exactly the failure Solo exists to avoid. The default
+        // branch of both switches logs an error if this list and those switches ever diverge again.
         private static readonly string[] _previewActionSections =
         {
             SectionKeys.Sampling,
             SectionKeys.Pregrade,
+            SectionKeys.Posterize,
             SectionKeys.LensSensor,
             SectionKeys.Film,
             SectionKeys.Palette,
@@ -407,6 +453,64 @@ namespace CrowFX.EditorTools
         };
 
         // =============================================================================================
+        // MULTI-OBJECT EDITING
+        //
+        // Ordinary property edits need nothing special: they go through serializedObject, which
+        // already spans every selected component and shows a dash where their values differ.
+        // What does need care is everything that reaches past serializedObject to touch the
+        // component directly -- undo recording, look application, the camera depth fix-it -- since
+        // those silently affected only the primary selection.
+        //
+        // The preview machinery (Solo, Mute, Bypass, live stage previews, look previews) stays
+        // single-selection on purpose. It works by overwriting values, remembering the originals,
+        // and putting them back if the current value still matches what it wrote. Across a mixed
+        // selection there is no single original to remember -- prop.boolValue reports the first
+        // target's value -- so restoring would flatten every other component onto it. Previewing
+        // five components at once is not meaningful anyway, so these are disabled rather than made
+        // to guess.
+        // =============================================================================================
+        private bool IsMultiEditing => targets != null && targets.Length > 1;
+
+        private int TargetCount => targets?.Length ?? 0;
+
+        /// <summary>Names the GameObject a component sits on, for messages about a mixed selection.</summary>
+        private static string TargetName(UnityEngine.Object obj)
+        {
+            var component = obj as Component;
+            return component != null ? component.gameObject.name : "the primary selection";
+        }
+
+        /// <summary>Records undo for every selected component, not just the primary one.</summary>
+        private void RecordTargetsUndo(string undoLabel)
+        {
+            if (targets == null || targets.Length == 0) return;
+            Undo.RecordObjects(targets, undoLabel);
+        }
+
+        /// <summary>
+        /// Runs the post-commit bookkeeping (dirty flag, depth mode, profile push) once per
+        /// selected component. A serializedObject write lands on all of them, so all of them need it.
+        /// </summary>
+        private void FinalizeCommittedTargetChanges()
+        {
+            if (targets == null) return;
+
+            for (int i = 0; i < targets.Length; i++)
+                FinalizeCommittedTargetChange(targets[i] as CrowImageEffects);
+        }
+
+        /// <summary>
+        /// Explains why a preview-style control is unavailable, so the disabled button is not a
+        /// dead end the user has to guess at.
+        /// </summary>
+        private void HintMultiEditUnavailable(string what)
+        {
+            CrowFxEditorUI.Hint(
+                $"{what} is unavailable while {TargetCount} components are selected, because it " +
+                "restores by putting back a single remembered value. Select one component to use it.");
+        }
+
+        // =============================================================================================
         // LIFECYCLE
         // =============================================================================================
         private void OnEnable()
@@ -415,13 +519,16 @@ namespace CrowFX.EditorTools
             EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
             _search = EditorPrefs.GetString(Pref_Search, "");
             _fullPresetSearch = EditorPrefs.GetString(Pref_FullPresetSearch, "");
-            _fullPresetCategory = Mathf.Clamp(EditorPrefs.GetInt(Pref_FullPresetCategory, 0), 0, AssetLookCategoryIndex);
+            _fullPresetCategory = Mathf.Clamp(EditorPrefs.GetInt(Pref_FullPresetCategory, 0), 0, AllLooksCategoryIndex);
             _selectedFullStackPreset = (FullStackPreset)Mathf.Clamp(
                 EditorPrefs.GetInt(Pref_FullPresetSelection, (int)FullStackPreset.SoftCinematic),
                 0, Enum.GetValues(typeof(FullStackPreset)).Length - 1);
             _fullPresetAmount = Mathf.Clamp(EditorPrefs.GetFloat(Pref_FullPresetAmount, 0.85f), 0.25f, 1f);
             _fullPresetFavoritesOnly = EditorPrefs.GetBool(Pref_FullPresetFavoritesOnly, false);
+            LoadShownSectionHints();
             LoadFullPresetFavorites();
+            LoadAssetLookFavorites();
+            LoadCollapsedLookGroups();
             LoadFavorites();
             InitExtraFoldouts();
             RebuildAll();
@@ -434,6 +541,218 @@ namespace CrowFX.EditorTools
             RestorePreviewStatesIfNeeded();
             RestorePreviewBypassIfNeeded();
             UnregisterAllFoldListeners();
+            ReleaseLivePreviewResources();
+        }
+
+        // =============================================================================================
+        // LIVE STAGE PREVIEW
+        //
+        // Schematic previews can only ever illustrate the handful of parameters they were written
+        // against, and they cannot show anything time-based at all. These render the real stage
+        // shader over a test chart through CrowImageEffects.RenderStagePreview, so every control in
+        // the section moves the image and animated stages animate, with no chance of drifting from
+        // what the stage actually does.
+        // =============================================================================================
+
+        private RenderTexture _livePreviewRT;
+        private Texture2D _livePreviewSource;
+        private bool _livePreviewVisible;
+
+        public override bool RequiresConstantRepaint() => _livePreviewVisible;
+
+        private void ReleaseLivePreviewResources()
+        {
+            if (_livePreviewRT != null)
+            {
+                if (RenderTexture.active == _livePreviewRT) RenderTexture.active = null;
+                _livePreviewRT.Release();
+                DestroyImmediate(_livePreviewRT);
+                _livePreviewRT = null;
+            }
+
+            if (_livePreviewSource != null)
+            {
+                DestroyImmediate(_livePreviewSource);
+                _livePreviewSource = null;
+            }
+        }
+
+        // Previews are drawn at a fixed 16:9 so the chart is never distorted and every stage is
+        // judged against the same frame shape a game view has. Width is capped so the preview
+        // stays a reference image inside the inspector rather than dominating it.
+        private const float LivePreviewAspect = 16f / 9f;
+        private const float LivePreviewMaxWidth = 400f;
+        private const float LivePreviewMinWidth = 140f;
+
+        private void DrawLivePreview(string title, CrowImageEffects.PreviewStage stage, string note = null)
+        {
+            // A live preview renders one component's settings through the real stage shader, so
+            // there is nothing coherent to show for a selection whose values disagree.
+            if (IsMultiEditing)
+                return;
+
+            DrawSubSection(title, "d_ViewToolOrbit", GetPreviewFold(stage.ToString()),
+                () => DrawLivePreviewBody(stage, note), "live render");
+        }
+
+        private void DrawLivePreviewBody(CrowImageEffects.PreviewStage stage, string note)
+        {
+            // Height must be identical in the Layout and Repaint passes or IMGUI throws, and
+            // GUILayoutUtility.GetRect reports a dummy width during Layout. currentViewWidth is
+            // stable across both, so the reserved height is derived from it rather than the rect.
+            float estimatedWidth = Mathf.Clamp(
+                EditorGUIUtility.currentViewWidth - 42f, LivePreviewMinWidth, LivePreviewMaxWidth);
+            float reservedHeight = Mathf.Round(estimatedWidth / LivePreviewAspect);
+
+            var outer = GUILayoutUtility.GetRect(0f, reservedHeight, GUILayout.ExpandWidth(true));
+
+            // GetRect must run in every event so layout stays stable; only the render is
+            // Repaint-only.
+            if (Event.current.type != EventType.Repaint)
+            {
+                _livePreviewVisible = true;
+                return;
+            }
+
+            // Fit the exact aspect inside whatever width the panel actually gave us, then centre.
+            float drawWidth = Mathf.Min(outer.width - 4f, reservedHeight * LivePreviewAspect);
+            float drawHeight = Mathf.Round(drawWidth / LivePreviewAspect);
+            var rect = new Rect(
+                Mathf.Round(outer.x + (outer.width - drawWidth) * 0.5f),
+                Mathf.Round(outer.y + (reservedHeight - drawHeight) * 0.5f),
+                Mathf.Round(drawWidth),
+                drawHeight);
+
+            EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.24f));
+            CrowFxEditorUI.Theme.DrawBorder(rect);
+
+            var fx = target as CrowImageEffects;
+            if (fx == null || rect.width < 8f || rect.height < 8f) return;
+
+            // One render-target texel per drawn pixel, so pattern pitch - scanlines, dither
+            // cells, phosphor and subpixel structure - appears at its true size instead of
+            // being resampled on the way to the screen.
+            int w = Mathf.Clamp(Mathf.RoundToInt(rect.width), 16, 1024);
+            int h = Mathf.Clamp(Mathf.RoundToInt(rect.height), 16, 640);
+
+            EnsureLivePreviewTargets(w, h);
+            if (_livePreviewRT == null || _livePreviewSource == null) return;
+
+            var previousActive = RenderTexture.active;
+            bool rendered;
+            try
+            {
+                rendered = fx.RenderStagePreview(stage, _livePreviewSource, _livePreviewRT);
+            }
+            finally
+            {
+                RenderTexture.active = previousActive;
+            }
+
+            if (!rendered) return;
+
+            GUI.DrawTexture(rect, _livePreviewRT, ScaleMode.StretchToFill, false);
+            _livePreviewVisible = true;
+
+            if (!string.IsNullOrEmpty(note))
+            {
+                var noteRect = new Rect(rect.x + 6f, rect.yMax - 15f, rect.width - 12f, 13f);
+                EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 17f, rect.width, 17f), new Color(0f, 0f, 0f, 0.45f));
+                GUI.Label(noteRect, note, EditorStyles.miniLabel);
+            }
+        }
+
+        private void EnsureLivePreviewTargets(int width, int height)
+        {
+            if (_livePreviewRT == null || _livePreviewRT.width != width || _livePreviewRT.height != height)
+            {
+                if (_livePreviewRT != null)
+                {
+                    _livePreviewRT.Release();
+                    DestroyImmediate(_livePreviewRT);
+                }
+
+                var format = SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf)
+                    ? RenderTextureFormat.ARGBHalf
+                    : RenderTextureFormat.ARGB32;
+
+                _livePreviewRT = new RenderTexture(width, height, 0, format)
+                {
+                    hideFlags = HideFlags.HideAndDontSave,
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                _livePreviewRT.Create();
+            }
+
+            if (_livePreviewSource == null)
+                _livePreviewSource = BuildPreviewChart();
+        }
+
+        /// <summary>Test chart chosen so every stage has something to act on: a tonal ramp for
+        /// grading and quantization, saturated bars for chroma and palette work, fine checks for
+        /// sampling and sharpening, and a soft gradient for banding and dither.</summary>
+        private static Texture2D BuildPreviewChart()
+        {
+            // 16:9 to match the preview frame, so the chart is never stretched.
+            const int w = 320;
+            const int h = 180;
+
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false, true)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            Color[] bars =
+            {
+                Color.white, Color.yellow, Color.cyan, Color.green,
+                Color.magenta, Color.red, Color.blue, new Color(0.05f, 0.05f, 0.05f, 1f)
+            };
+
+            var pixels = new Color32[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    float u = x / (w - 1f);
+                    float v = y / (h - 1f);
+                    Color c;
+
+                    if (v > 0.72f)
+                    {
+                        // Colour bars: chroma bandwidth, palette matching, bleed.
+                        c = bars[Mathf.Clamp(Mathf.FloorToInt(u * bars.Length), 0, bars.Length - 1)];
+                    }
+                    else if (v > 0.52f)
+                    {
+                        // Linear ramp: banding, posterize steps, grading response.
+                        c = new Color(u, u, u, 1f);
+                    }
+                    else if (v > 0.30f)
+                    {
+                        // High-contrast detail: sharpening halos, sampling aliasing, ringing.
+                        int check = ((x / 3) + (y / 3)) & 1;
+                        float edge = u < 0.5f ? (check == 0 ? 0.06f : 0.94f) : (x % 2 == 0 ? 0.10f : 0.90f);
+                        c = new Color(edge, edge, edge, 1f);
+                    }
+                    else
+                    {
+                        // Smooth radial falloff: vignette, bloom, halation, dither in gradients.
+                        float dx = u - 0.5f;
+                        float dy = (v / 0.30f) - 0.5f;
+                        float d = Mathf.Clamp01(1f - Mathf.Sqrt(dx * dx + dy * dy) * 1.8f);
+                        c = new Color(d * 0.95f, d * 0.88f, d * 0.75f, 1f);
+                    }
+
+                    pixels[y * w + x] = c;
+                }
+            }
+
+            tex.SetPixels32(pixels);
+            tex.Apply(false, false);
+            return tex;
         }
 
         private void HandlePlayModeStateChanged(PlayModeStateChange state)
@@ -547,6 +866,11 @@ namespace CrowFX.EditorTools
 
             _allFolds.Clear();
             _prefKeyByFold.Clear();
+
+            // Preview folds are created lazily, so they have to be dropped here too. Keeping them
+            // would hand back folds whose listeners have been stripped: they would animate but
+            // never persist, and never re-register for the bulk expand and collapse operations.
+            _previewFolds.Clear();
         }
 
         private void SetAllFolds(bool expanded)
@@ -631,6 +955,20 @@ namespace CrowFX.EditorTools
         {
             CrowFxEditorUI.Ensure(GetCustomFont());
 
+            // Re-established by any live preview drawn this pass. Sections that are collapsed or
+            // filtered out stop requesting continuous repaints.
+            _livePreviewVisible = false;
+
+            // Snapshotted on Layout only. Clicking a section's "?" mutates the live set during
+            // the mouse event, and drawing from it directly would leave Repaint emitting a
+            // different number of hint panels than Layout reserved space for.
+            if (Event.current.type == EventType.Layout)
+            {
+                _shownSectionHintsThisFrame.Clear();
+                foreach (string key in _shownSectionHints)
+                    _shownSectionHintsThisFrame.Add(key);
+            }
+
             var fx = (CrowImageEffects)target;
             var previousProfile = fx != null ? fx.profile : null;
             bool previousAutoApplyProfile = fx != null && fx.autoApplyProfile;
@@ -656,20 +994,36 @@ namespace CrowFX.EditorTools
 
             bool changed = serializedObject.ApplyModifiedProperties();
 
-            if (fx != null)
+            if (targets != null)
             {
-                if (changed)
-                    HandleInspectorProfileStateChange(fx, previousProfile, previousAutoApplyProfile);
-                else
-                    EnsureDepthModeIfNeeded(fx);
+                // A serializedObject write lands on every selected component, so the follow-up
+                // bookkeeping has to as well. The previous profile values come from the primary
+                // target: when the selection disagreed, the field showed a dash and assigning it
+                // set them all to the same thing anyway.
+                for (int i = 0; i < targets.Length; i++)
+                {
+                    var each = targets[i] as CrowImageEffects;
+                    if (each == null) continue;
+
+                    if (changed)
+                        HandleInspectorProfileStateChange(each, previousProfile, previousAutoApplyProfile);
+                    else
+                        EnsureDepthModeIfNeeded(each);
+                }
             }
 
             if (Event.current.type == EventType.Layout)
                 _drawnThisSection.Clear();
         }
 
+        // Destructive and global controls. Given a tinted panel of their own because at the top of
+        // the inspector, in the same flat grey as everything else, Reset and Randomize read as
+        // ordinary buttons rather than as actions that overwrite the entire stack.
+        private static readonly Color WorkflowPanelTint = new Color(0.42f, 0.30f, 0.20f, 0.16f);
+
         private void DrawWorkflowBar()
         {
+            using (CrowFxEditorUI.AccentPanel(WorkflowPanelTint))
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (CrowFxEditorUI.MiniPill("Reset", GUILayout.ExpandWidth(true)))
@@ -697,11 +1051,14 @@ namespace CrowFX.EditorTools
                     }
                 }
 
-                if (CrowFxEditorUI.MiniPill(_previewBypassActive ? "Resume" : "Bypass", GUILayout.ExpandWidth(true)))
+                using (new EnabledScope(GUI.enabled && !IsMultiEditing))
                 {
-                    RestorePreviewStatesIfNeeded();
-                    TogglePreviewBypass();
-                    GUI.FocusControl(null);
+                    if (CrowFxEditorUI.MiniPill(_previewBypassActive ? "Resume" : "Bypass", GUILayout.ExpandWidth(true)))
+                    {
+                        RestorePreviewStatesIfNeeded();
+                        TogglePreviewBypass();
+                        GUI.FocusControl(null);
+                    }
                 }
             }
 
@@ -714,28 +1071,37 @@ namespace CrowFX.EditorTools
             var stages = new List<string>(22);
             if (fx == null) return stages;
 
-            if (fx.pixelSize > 1 || fx.useVirtualGrid) stages.Add("Sampling");
-            bool posterizeActive = fx.animateLevels ||
-                (fx.usePerChannel ? fx.levelsR < 512 || fx.levelsG < 512 || fx.levelsB < 512 : fx.levels < 512);
+            // Authored rather than live values: Solo neutralizes every other section, and reading
+            // that back here would empty this strip and reflow everything below it the moment you
+            // solo anything. The "Solo: X" status pill already reports the isolation.
+            bool B(string n, bool v) => AuthoredBool(n, v);
+            float F(string n, float v) => AuthoredFloat(n, v);
+            int I(string n, int v) => AuthoredInt(n, v);
+
+            if (I("pixelSize", fx.pixelSize) > 1 || B("useVirtualGrid", fx.useVirtualGrid)) stages.Add("Sampling");
+            bool posterizeActive = B("animateLevels", fx.animateLevels) ||
+                (B("usePerChannel", fx.usePerChannel)
+                    ? I("levelsR", fx.levelsR) < 512 || I("levelsG", fx.levelsG) < 512 || I("levelsB", fx.levelsB) < 512
+                    : I("levels", fx.levels) < 512);
             if (posterizeActive) stages.Add("Posterize");
-            if (fx.pregradeEnabled) stages.Add("Pregrade");
-            if (fx.lensSensorEnabled && fx.lensSensorIntensity > 0.0001f) stages.Add("Lens");
-            if (fx.filmEnabled && fx.filmIntensity > 0.0001f) stages.Add("Film");
-            if (fx.usePalette && fx.paletteTex != null) stages.Add("Palette");
-            if (fx.useMask && fx.maskTex != null) stages.Add("Texture Mask");
-            if (fx.useDepthMask) stages.Add("Depth Mask");
-            if (fx.jitterEnabled && fx.jitterStrength > 0f) stages.Add("Jitter");
-            if (fx.bleedBlend > 0f && fx.bleedIntensity > 0f) stages.Add("RGB Bleed");
-            if (fx.ghostEnabled && fx.ghostBlend > 0f) stages.Add("Ghost");
-            if (fx.motionGlitchEnabled && fx.motionGlitchIntensity > 0.0001f) stages.Add("Motion");
-            if (fx.edgeEnabled && fx.edgeBlend > 0f) stages.Add("Edges");
-            if (fx.unsharpEnabled && fx.unsharpAmount > 0f) stages.Add("Unsharp");
-            if (fx.ditherMode != CrowImageEffects.DitherMode.None && fx.ditherStrength > 0f) stages.Add("Dither");
-            if (fx.digitalVideoEnabled && fx.digitalVideoIntensity > 0.0001f) stages.Add("Digital Video");
-            if (fx.vhsEnabled && fx.vhsIntensity > 0.0001f) stages.Add("VHS");
-            if (fx.compositeEnabled && fx.compositeIntensity > 0.0001f) stages.Add("Composite");
-            if (fx.crtEnabled) stages.Add("CRT");
-            if (fx.lcdEnabled && fx.lcdIntensity > 0.0001f) stages.Add("LCD");
+            if (B("pregradeEnabled", fx.pregradeEnabled)) stages.Add("Pregrade");
+            if (B("lensSensorEnabled", fx.lensSensorEnabled) && F("lensSensorIntensity", fx.lensSensorIntensity) > 0.0001f) stages.Add("Lens");
+            if (B("filmEnabled", fx.filmEnabled) && F("filmIntensity", fx.filmIntensity) > 0.0001f) stages.Add("Film");
+            if (B("usePalette", fx.usePalette) && fx.paletteTex != null) stages.Add("Palette");
+            if (B("useMask", fx.useMask) && fx.maskTex != null) stages.Add("Texture Mask");
+            if (B("useDepthMask", fx.useDepthMask)) stages.Add("Depth Mask");
+            if (B("jitterEnabled", fx.jitterEnabled) && F("jitterStrength", fx.jitterStrength) > 0f) stages.Add("Jitter");
+            if (F("bleedBlend", fx.bleedBlend) > 0f && F("bleedIntensity", fx.bleedIntensity) > 0f) stages.Add("RGB Bleed");
+            if (B("ghostEnabled", fx.ghostEnabled) && F("ghostBlend", fx.ghostBlend) > 0f) stages.Add("Ghost");
+            if (B("motionGlitchEnabled", fx.motionGlitchEnabled) && F("motionGlitchIntensity", fx.motionGlitchIntensity) > 0.0001f) stages.Add("Motion");
+            if (B("edgeEnabled", fx.edgeEnabled) && F("edgeBlend", fx.edgeBlend) > 0f) stages.Add("Edges");
+            if (B("unsharpEnabled", fx.unsharpEnabled) && F("unsharpAmount", fx.unsharpAmount) > 0f) stages.Add("Unsharp");
+            if (I("ditherMode", (int)fx.ditherMode) != (int)CrowImageEffects.DitherMode.None && F("ditherStrength", fx.ditherStrength) > 0f) stages.Add("Dither");
+            if (B("digitalVideoEnabled", fx.digitalVideoEnabled) && F("digitalVideoIntensity", fx.digitalVideoIntensity) > 0.0001f) stages.Add("Digital Video");
+            if (B("vhsEnabled", fx.vhsEnabled) && F("vhsIntensity", fx.vhsIntensity) > 0.0001f) stages.Add("VHS");
+            if (B("compositeEnabled", fx.compositeEnabled) && F("compositeIntensity", fx.compositeIntensity) > 0.0001f) stages.Add("Composite");
+            if (B("crtEnabled", fx.crtEnabled)) stages.Add("CRT");
+            if (B("lcdEnabled", fx.lcdEnabled) && F("lcdIntensity", fx.lcdIntensity) > 0.0001f) stages.Add("LCD");
 
             return stages;
         }
@@ -749,10 +1115,23 @@ namespace CrowFX.EditorTools
             return camera != null && (camera.depthTextureMode & DepthTextureMode.Depth) == 0;
         }
 
+        /// <summary>True when any selected component sits on a camera with depth switched off.</summary>
+        private bool AnyTargetNeedsDepthFix()
+        {
+            if (targets == null) return false;
+
+            for (int i = 0; i < targets.Length; i++)
+                if (NeedsDepthFix(targets[i] as CrowImageEffects))
+                    return true;
+
+            return false;
+        }
+
         private void DrawSummaryStatusStrip(CrowImageEffects targetFx)
         {
             var activeStages = GetActiveStageLabels(targetFx);
             string stageSummary = activeStages.Count == 1 ? "1 active stage" : $"{activeStages.Count} active stages";
+
             EditorGUILayout.LabelField(stageSummary, CrowFxEditorUI.Styles.SummaryText);
 
             if (targetFx != null && targetFx.profile != null)
@@ -868,7 +1247,15 @@ namespace CrowFX.EditorTools
             if (pills == null || pills.Count == 0)
                 return;
 
-            float availableWidth = Mathf.Max(140f, EditorGUIUtility.currentViewWidth - 56f);
+            // currentViewWidth changes between the Layout and Repaint passes whenever the
+            // inspector's vertical scrollbar appears or disappears. Wrapping on a different width
+            // in each pass emits a different number of pills, and IMGUI aborts the repaint with
+            // "Getting control N's position in a group with only N controls". Capturing the
+            // width during Layout and reusing it guarantees both passes wrap identically.
+            if (Event.current.type == EventType.Layout || _summaryPillLayoutWidth <= 0f)
+                _summaryPillLayoutWidth = Mathf.Max(140f, EditorGUIUtility.currentViewWidth - 56f);
+
+            float availableWidth = _summaryPillLayoutWidth;
             int index = 0;
 
             while (index < pills.Count)
@@ -970,6 +1357,17 @@ namespace CrowFX.EditorTools
                 EditorGUILayout.LabelField(summary, CrowFxEditorUI.Styles.SummaryText);
                 GUILayout.Space(4);
                 DrawVersionStatus();
+
+                if (IsMultiEditing)
+                {
+                    GUILayout.Space(4);
+                    CrowFxEditorUI.Hint(
+                        $"Editing {TargetCount} components. Edits, Reset, Randomize, Paste and looks " +
+                        "apply to all of them; a dash means they currently disagree. The readouts " +
+                        $"above describe {TargetName(target)} only, and preview tools (Solo, Mute, " +
+                        "Bypass) are unavailable because they restore a single remembered value.");
+                }
+
                 GUILayout.Space(6);
                 DrawWorkflowBar();
                 CrowFxEditorUI.Divider();
@@ -1005,12 +1403,13 @@ namespace CrowFX.EditorTools
                 Rect starRect   = new Rect(headerRect.x + 2f,    headerRect.y + 4f, 16f, 18f);
                 Rect resetRect  = new Rect(headerRect.xMax - 96f, headerRect.y + 4f, 92f, 18f);
                 Rect randomRect = new Rect(headerRect.xMax - 114f, headerRect.y + 4f, 16f, 18f);
-                Rect rightButtons = new Rect(randomRect.x, randomRect.y, resetRect.xMax - randomRect.x, randomRect.height);
+                Rect helpRect   = new Rect(headerRect.xMax - 132f, headerRect.y + 4f, 16f, 18f);
+                Rect rightButtons = new Rect(helpRect.x, helpRect.y, resetRect.xMax - helpRect.x, helpRect.height);
                 if (isLibrarySection)
                     rightButtons = new Rect(headerRect.xMax, headerRect.y + 4f, 0f, 18f);
 
-                Rect ignoreLeft  = new Rect(starRect.x,   starRect.y,   starRect.width,               starRect.height);
-                Rect ignoreRight = new Rect(randomRect.x, randomRect.y, resetRect.xMax - randomRect.x, randomRect.height);
+                Rect ignoreLeft  = new Rect(starRect.x, starRect.y, starRect.width, starRect.height);
+                Rect ignoreRight = new Rect(helpRect.x, helpRect.y, resetRect.xMax - helpRect.x, helpRect.height);
                 Rect ignoreAll = new Rect(ignoreLeft.x, ignoreLeft.y, ignoreRight.xMax - ignoreLeft.x, ignoreLeft.height);
 
                 HandleHeaderClick(headerRect, fold, ignoreRect1: starRect, ignoreRect2: rightButtons);
@@ -1020,6 +1419,7 @@ namespace CrowFX.EditorTools
                 if (!isLibrarySection)
                 {
                     DrawSectionEnabledDot(headerRect, sectionKey);
+                    DrawSectionHelpButton(helpRect, sectionKey);
                     DrawDiceButton(randomRect, sectionKey);
                 }
 
@@ -1033,7 +1433,19 @@ namespace CrowFX.EditorTools
                         GUILayout.Space(8);
                         if (DrawSectionToolbar(sectionKey))
                             GUILayout.Space(8);
-                        drawContent?.Invoke();
+
+                        // Hint visibility is scoped to the section being drawn, from the Layout
+                        // snapshot so a click on "?" cannot change it partway through a frame.
+                        bool previousShowHints = CrowFxEditorUI.ShowHelpHints;
+                        CrowFxEditorUI.ShowHelpHints = _shownSectionHintsThisFrame.Contains(sectionKey);
+                        try
+                        {
+                            drawContent?.Invoke();
+                        }
+                        finally
+                        {
+                            CrowFxEditorUI.ShowHelpHints = previousShowHints;
+                        }
                     }
                 }
             }
@@ -1042,7 +1454,11 @@ namespace CrowFX.EditorTools
         private bool DrawSectionToolbar(string sectionKey)
         {
             var sectionProps = GetSectionPropertyNames(sectionKey);
-            bool canPreview = SupportsPreviewActions(sectionKey);
+
+            // Solo and Mute are dropped rather than disabled across a multi-selection: they cannot
+            // round-trip mixed values, and a permanently greyed pill in every section header is
+            // more noise than the single explanation carried at the top of the inspector.
+            bool canPreview = SupportsPreviewActions(sectionKey) && !IsMultiEditing;
             bool canCopyPaste = sectionProps != null && sectionProps.Count > 0;
             if (!canPreview && !canCopyPaste)
                 return false;
@@ -1058,13 +1474,13 @@ namespace CrowFX.EditorTools
                     using (new EnabledScope(!soloLocked || soloed))
                     {
                         if (CrowFxEditorUI.MiniPill(soloed ? "Unsolo" : "Solo", GUILayout.Width(68f)))
-                            ToggleSectionPreviewSolo(sectionKey);
+                            ToggleSectionPreviewSoloGuarded(sectionKey);
                     }
 
                     using (new EnabledScope(string.IsNullOrEmpty(_soloSectionKey)))
                     {
                         if (CrowFxEditorUI.MiniPill(muted ? "Unmute" : "Mute", GUILayout.Width(68f)))
-                            ToggleSectionPreviewMute(sectionKey);
+                            ToggleSectionPreviewMuteGuarded(sectionKey);
                     }
                 }
 
@@ -1136,6 +1552,72 @@ namespace CrowFX.EditorTools
                 Event.current.Use();
             }
         }
+
+        private void LoadShownSectionHints()
+        {
+            _shownSectionHints.Clear();
+            string raw = EditorPrefs.GetString(Pref_ShownSectionHints, "");
+            if (string.IsNullOrEmpty(raw)) return;
+
+            foreach (string key in raw.Split(','))
+                if (!string.IsNullOrEmpty(key)) _shownSectionHints.Add(key);
+        }
+
+        private void ToggleSectionHints(string sectionKey)
+        {
+            if (!_shownSectionHints.Add(sectionKey))
+                _shownSectionHints.Remove(sectionKey);
+
+            EditorPrefs.SetString(Pref_ShownSectionHints, string.Join(",", _shownSectionHints));
+        }
+
+        /// <summary>Per-section help toggle. Sits beside Randomize and reveals or hides that
+        /// section's explanatory notes; warnings, errors and fix-it prompts ignore it.</summary>
+        private void DrawSectionHelpButton(Rect rect, string sectionKey)
+        {
+            bool hintsShown = _shownSectionHints.Contains(sectionKey);
+
+            bool isHovered = rect.Contains(Event.current.mousePosition);
+            bool isPressed = isHovered && Event.current.type == EventType.MouseDown && Event.current.button == 0;
+            Color bgColor = isPressed ? CrowFxEditorUI.Theme.ButtonActive
+                          : isHovered ? CrowFxEditorUI.Theme.ButtonHover
+                          : CrowFxEditorUI.Theme.ButtonNormal;
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, bgColor);
+                CrowFxEditorUI.Theme.DrawBorder(rect);
+
+                // Built from EditorStyles.label and never given the packaged font, so this is the
+                // editor's default typeface, which has a real bold face to draw rather than the
+                // smeared synthetic one a single-weight font would force.
+                _sectionHelpStyle ??= new GUIStyle(EditorStyles.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    padding = new RectOffset(0, 0, 0, 0),
+                    fontSize = 11,
+                    fontStyle = FontStyle.Bold,
+                    clipping = TextClipping.Overflow
+                };
+
+                var previous = GUI.contentColor;
+                GUI.contentColor = hintsShown ? new Color(0.55f, 0.80f, 0.85f, 1f)
+                                              : new Color(1f, 1f, 1f, 0.30f);
+                GUI.Label(rect, "?", _sectionHelpStyle);
+                GUI.contentColor = previous;
+            }
+
+            if (GUI.Button(rect, GUIContent.none, GUIStyle.none))
+            {
+                ToggleSectionHints(sectionKey);
+                Event.current.Use();
+            }
+
+            if (isHovered)
+                GUI.Label(rect, new GUIContent("", hintsShown ? "Hide this section's notes" : "Show this section's notes"), GUIStyle.none);
+        }
+
+        private static GUIStyle _sectionHelpStyle;
 
         private void DrawDiceButton(Rect randomRect, string sectionKey)
         {
@@ -1290,7 +1772,7 @@ namespace CrowFX.EditorTools
                 if (hintWidth > 20f)
                 {
                     var hintRect = new Rect(hintLeft, rect.y + 6f, hintWidth, 16f);
-                    GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
+                    GUI.Label(hintRect, hint.ToUpperInvariant(), CrowFxEditorUI.Styles.HeaderHint);
                 }
             }
         }
@@ -1334,7 +1816,7 @@ namespace CrowFX.EditorTools
             if (!string.IsNullOrEmpty(hint))
             {
                 var hintRect = new Rect(rect.x + rect.width * 0.62f, rect.y + 4f, rect.width * 0.36f, 16f);
-                GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
+                GUI.Label(hintRect, hint.ToUpperInvariant(), CrowFxEditorUI.Styles.HeaderHint);
             }
         }
 
@@ -1349,12 +1831,12 @@ namespace CrowFX.EditorTools
             }
 
             var titleRect = new Rect(rect.x + 10f, rect.y + 4f, rect.width * 0.7f, 18f);
-            GUI.Label(titleRect, title, CrowFxEditorUI.Styles.SectionTitle);
+            GUI.Label(titleRect, title.ToUpperInvariant(), CrowFxEditorUI.Styles.SectionTitle);
 
             if (!string.IsNullOrEmpty(hint))
             {
                 var hintRect = new Rect(rect.x + rect.width * 0.7f, rect.y + 6f, rect.width * 0.28f, 16f);
-                GUI.Label(hintRect, $"<i>{hint}</i>", CrowFxEditorUI.Styles.HeaderHint);
+                GUI.Label(hintRect, hint.ToUpperInvariant(), CrowFxEditorUI.Styles.HeaderHint);
             }
         }
 
@@ -1410,8 +1892,24 @@ namespace CrowFX.EditorTools
             { SectionKeys.Ghost,       "ghostEnabled"    },
             { SectionKeys.Crt,         "crtEnabled"      },
             { SectionKeys.Vhs,         "vhsEnabled"      },
-            { SectionKeys.Sampling,    null              },
-            { SectionKeys.Posterize,   null              },
+
+            // These six were previously left to the name-guessing fallback below. It lowercases
+            // the section key, so it only ever matched single-word sections: LensSensor,
+            // DigitalVideo and MotionGlitch silently produced no status dot at all, and Film,
+            // Composite and LCD only worked by coincidence. Every section is mapped explicitly
+            // now so the indicator cannot depend on a naming accident.
+            { SectionKeys.LensSensor,   "lensSensorEnabled"   },
+            { SectionKeys.Film,         "filmEnabled"         },
+            { SectionKeys.MotionGlitch, "motionGlitchEnabled" },
+            { SectionKeys.DigitalVideo, "digitalVideoEnabled" },
+            { SectionKeys.Composite,    "compositeEnabled"    },
+            { SectionKeys.Lcd,          "lcdEnabled"          },
+
+            // Sections with no single enable flag: the dot is driven purely by IsSectionActive.
+            { SectionKeys.Sampling,    string.Empty      },
+            { SectionKeys.Posterize,   string.Empty      },
+
+            // Sections that never show a dot.
             { SectionKeys.Shaders,     null              },
             { SectionKeys.Master,      null              },
         };
@@ -1420,31 +1918,30 @@ namespace CrowFX.EditorTools
         {
             bool isOn = IsSectionActive(sectionKey);
 
-            if (_dotPropOverrides.TryGetValue(sectionKey, out var overrideName))
+            if (!_dotPropOverrides.TryGetValue(sectionKey, out var overrideName))
             {
-                if (overrideName == null) return;
+                Debug.LogError(
+                    $"CrowFX: section '{sectionKey}' has no status-dot mapping, so it shows no " +
+                    "on/off indicator. Add it to _dotPropOverrides (use null to suppress the dot, " +
+                    "or an empty string for sections with no single enable flag).");
+                return;
             }
-            else
-            {
-                string lower = sectionKey.ToLower();
-                string[] candidates = {
-                    lower + "Enabled",
-                    lower.TrimEnd('s') + "Enabled",
-                    "use" + sectionKey,
-                    "enable" + sectionKey
-                };
 
-                bool found = false;
-                foreach (var candidate in candidates)
+            // null suppresses the dot entirely. Empty means the section has no single enable
+            // flag and its state comes from IsSectionActive alone. Anything else names the flag,
+            // which is verified so a renamed field surfaces instead of silently losing the dot.
+            if (overrideName == null) return;
+
+            if (overrideName.Length > 0)
+            {
+                var flag = serializedObject.FindProperty(overrideName);
+                if (flag == null)
                 {
-                    var p = serializedObject.FindProperty(candidate);
-                    if (p != null && p.propertyType == SerializedPropertyType.Boolean)
-                    {
-                        found = true;
-                        break;
-                    }
+                    Debug.LogError(
+                        $"CrowFX: status-dot property '{overrideName}' for section '{sectionKey}' " +
+                        "does not exist on CrowImageEffects.");
+                    return;
                 }
-                if (!found) return;
             }
 
             var dotRect = new Rect(headerRect.xMax + 1f, headerRect.y + 9f, 8f, 8f);
@@ -1553,9 +2050,43 @@ namespace CrowFX.EditorTools
             DrawAutoRemaining(sectionKey);
         }
 
+        // Sections gated by an explicit enable toggle must not leak controls while switched off.
+        // Section bodies hide the fields they draw by hand, but any property the body reads
+        // without drawing is never claimed, so it used to fall through to the auto-draw below and
+        // render anyway -- Edge Outline's thickness and normal toggle, for example, which the body
+        // only reads to feed the preview. Gating here fixes every section at once instead of
+        // relying on each MarkDrawnMany list staying exhaustive as fields are added.
+        //
+        // Only bool flags gate. Sections driven by a float or an enum (Bleed's intensity, Dither's
+        // mode) have no "off" state that should hide the very control you turn them on with.
+        private bool TryGetSectionEnableToggle(string sectionKey, out SerializedProperty toggle)
+        {
+            toggle = null;
+
+            if (!_dotPropOverrides.TryGetValue(sectionKey, out var propName) || string.IsNullOrEmpty(propName))
+                return false;
+
+            var prop = serializedObject.FindProperty(propName);
+            if (prop == null || prop.propertyType != SerializedPropertyType.Boolean)
+                return false;
+
+            toggle = prop;
+            return true;
+        }
+
         private void DrawAutoRemaining(string sectionKey)
         {
             if (!_propsBySection.TryGetValue(sectionKey, out var list)) return;
+
+            if (TryGetSectionEnableToggle(sectionKey, out var gate) && !AuthoredBool(gate))
+            {
+                // Still draw the toggle itself if the body did not, or the section becomes a
+                // dead end with no way to switch it back on.
+                if (!_drawnThisSection.Contains(gate.name) && PropMatchesSearch(gate))
+                    DrawPropertyField(gate, includeChildren: true);
+
+                return;
+            }
 
             for (int i = 0; i < list.Count; i++)
             {
@@ -1669,7 +2200,7 @@ namespace CrowFX.EditorTools
             var targetFx = (CrowImageEffects)target;
             if (targetFx == null || propertyNames == null || propertyNames.Count == 0) return;
 
-            Undo.RecordObject(targetFx, undoLabel);
+            RecordTargetsUndo(undoLabel);
 
             var tmpGO = new GameObject("CrowImageEffects_Defaults__TEMP") { hideFlags = HideFlags.HideAndDontSave };
             try
@@ -1692,7 +2223,7 @@ namespace CrowFX.EditorTools
                 }
 
                 soDst.ApplyModifiedProperties();
-                FinalizeCommittedTargetChange(targetFx);
+                FinalizeCommittedTargetChanges();
             }
             finally
             {
@@ -1813,6 +2344,83 @@ namespace CrowFX.EditorTools
         private bool IsSectionPreviewMuted(string sectionKey)
             => _previewMutedSections.ContainsKey(sectionKey);
 
+        // =============================================================================================
+        // AUTHORED VALUES
+        //
+        // Solo and Mute write neutral values into other sections so the rendered result matches the
+        // isolation. The inspector must not read those back as if the user had switched the section
+        // off: if it does, every muted section collapses to its toggle and the active-stage strip
+        // loses its pills, so the section being soloed slides to a different scroll position at the
+        // exact moment you want to look at it. Layout decisions therefore read what the user
+        // authored, while the rendered image keeps using the overridden values.
+        // =============================================================================================
+
+        private static bool TryFindPreviewOverrideIn(
+            List<PreviewPropertyOverride> overrides, string propertyName, out PreviewPropertyOverride found)
+        {
+            found = null;
+            if (overrides == null) return false;
+
+            for (int i = 0; i < overrides.Count; i++)
+            {
+                if (!string.Equals(overrides[i].PropertyName, propertyName, StringComparison.Ordinal)) continue;
+                found = overrides[i];
+                return true;
+            }
+            return false;
+        }
+
+        private bool TryFindPreviewOverride(string propertyName, out PreviewPropertyOverride found)
+        {
+            // Deliberately excludes _soloSectionPreviewOverrides, which belong to the section
+            // being soloed. The two kinds of override mean opposite things:
+            //
+            //   Muted sections are temporarily neutralized, so layout must ignore that and follow
+            //   what the user authored, or the inspector reflows around the soloed section.
+            //
+            //   The soloed section is temporarily forced ON so there is something to look at. Its
+            //   authored value is the state you are trying to leave behind, so layout must follow
+            //   the live value instead. Reading the authored value here kept the body collapsed on
+            //   a section you had just soloed, and since the recorded original never updates,
+            //   ticking Enable afterwards could not reopen it either.
+            foreach (var kv in _soloMutedSections)
+                if (TryFindPreviewOverrideIn(kv.Value, propertyName, out found)) return true;
+
+            foreach (var kv in _previewMutedSections)
+                if (TryFindPreviewOverrideIn(kv.Value, propertyName, out found)) return true;
+
+            found = null;
+            return false;
+        }
+
+        private bool AuthoredBool(string propertyName, bool currentValue)
+            => TryFindPreviewOverride(propertyName, out var o) && o.PropertyType == SerializedPropertyType.Boolean
+                ? o.BoolOriginalValue
+                : currentValue;
+
+        private float AuthoredFloat(string propertyName, float currentValue)
+            => TryFindPreviewOverride(propertyName, out var o) && o.PropertyType == SerializedPropertyType.Float
+                ? o.FloatOriginalValue
+                : currentValue;
+
+        private int AuthoredInt(string propertyName, int currentValue)
+            => TryFindPreviewOverride(propertyName, out var o) &&
+               (o.PropertyType == SerializedPropertyType.Integer || o.PropertyType == SerializedPropertyType.Enum)
+                ? o.IntOriginalValue
+                : currentValue;
+
+        private bool AuthoredBool(SerializedProperty prop)
+            => prop != null && AuthoredBool(prop.name, prop.boolValue);
+
+        private float AuthoredFloat(SerializedProperty prop)
+            => prop == null ? 0f : AuthoredFloat(prop.name, prop.floatValue);
+
+        private int AuthoredInt(SerializedProperty prop)
+            => prop == null ? 0 : AuthoredInt(prop.name, prop.intValue);
+
+        private int AuthoredEnum(SerializedProperty prop)
+            => prop == null ? 0 : AuthoredInt(prop.name, prop.enumValueIndex);
+
         private bool IsSectionSoloed(string sectionKey)
             => string.Equals(_soloSectionKey, sectionKey, StringComparison.Ordinal);
 
@@ -1890,7 +2498,7 @@ namespace CrowFX.EditorTools
                 soSrc.Update();
 
                 if (recordUndo)
-                    Undo.RecordObject(targetFx, undoLabel);
+                    RecordTargetsUndo(undoLabel);
 
                 for (int i = 0; i < props.Count; i++)
                 {
@@ -1901,7 +2509,7 @@ namespace CrowFX.EditorTools
                 }
 
                 serializedObject.ApplyModifiedProperties();
-                FinalizeCommittedTargetChange(targetFx);
+                FinalizeCommittedTargetChanges();
             }
             finally
             {
@@ -1985,6 +2593,19 @@ namespace CrowFX.EditorTools
             _previewMutedSections[sectionKey] = overrides;
             ApplyPreviewOverrides(overrides);
             GUI.FocusControl(null);
+        }
+
+        // Solo and Mute overwrite values and put the originals back later, which cannot span a
+        // selection whose values differ. The toolbar drops both pills when multi-editing; these
+        // guards make that structural rather than a property of one call site.
+        private void ToggleSectionPreviewSoloGuarded(string sectionKey)
+        {
+            if (!IsMultiEditing) ToggleSectionPreviewSolo(sectionKey);
+        }
+
+        private void ToggleSectionPreviewMuteGuarded(string sectionKey)
+        {
+            if (!IsMultiEditing) ToggleSectionPreviewMute(sectionKey);
         }
 
         private void ToggleSectionPreviewSolo(string sectionKey)
@@ -2115,8 +2736,46 @@ namespace CrowFX.EditorTools
                 case SectionKeys.Pregrade:
                     CollectBoolPreviewOverride(overrides, "pregradeEnabled", false);
                     break;
+                case SectionKeys.Posterize:
+                    // 512 levels is the pass-through point for the quantizer; per-channel,
+                    // animation, luma-only and invert all have to be cleared as well or
+                    // quantization keeps acting during another section's solo.
+                    CollectIntPreviewOverride(overrides, "levels", 512);
+                    CollectBoolPreviewOverride(overrides, "usePerChannel", false);
+                    CollectIntPreviewOverride(overrides, "levelsR", 512);
+                    CollectIntPreviewOverride(overrides, "levelsG", 512);
+                    CollectIntPreviewOverride(overrides, "levelsB", 512);
+                    CollectBoolPreviewOverride(overrides, "animateLevels", false);
+                    CollectBoolPreviewOverride(overrides, "luminanceOnly", false);
+                    CollectBoolPreviewOverride(overrides, "invert", false);
+                    break;
                 case SectionKeys.Palette:
                     CollectBoolPreviewOverride(overrides, "usePalette", false);
+                    CollectCurvePreviewOverride(overrides, "thresholdCurve", AnimationCurve.Linear(0f, 0f, 1f, 1f));
+                    break;
+                case SectionKeys.LensSensor:
+                    CollectBoolPreviewOverride(overrides, "lensSensorEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "lensSensorIntensity", 0f);
+                    break;
+                case SectionKeys.Film:
+                    CollectBoolPreviewOverride(overrides, "filmEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "filmIntensity", 0f);
+                    break;
+                case SectionKeys.MotionGlitch:
+                    CollectBoolPreviewOverride(overrides, "motionGlitchEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "motionGlitchIntensity", 0f);
+                    break;
+                case SectionKeys.DigitalVideo:
+                    CollectBoolPreviewOverride(overrides, "digitalVideoEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "digitalVideoIntensity", 0f);
+                    break;
+                case SectionKeys.Composite:
+                    CollectBoolPreviewOverride(overrides, "compositeEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "compositeIntensity", 0f);
+                    break;
+                case SectionKeys.Lcd:
+                    CollectBoolPreviewOverride(overrides, "lcdEnabled", false);
+                    CollectFloatPreviewOverride(overrides, "lcdIntensity", 0f);
                     break;
                 case SectionKeys.TextureMask:
                     CollectBoolPreviewOverride(overrides, "useMask", false);
@@ -2154,6 +2813,12 @@ namespace CrowFX.EditorTools
                 case SectionKeys.Vhs:
                     CollectBoolPreviewOverride(overrides, "vhsEnabled", false);
                     break;
+                default:
+                    Debug.LogError(
+                        $"CrowFX: section '{sectionKey}' offers Solo and Mute but has no neutral " +
+                        "override mapping, so it cannot be silenced. Add a case to " +
+                        "CaptureNeutralPreviewOverrides or remove it from _previewActionSections.");
+                    break;
             }
 
             return overrides;
@@ -2172,9 +2837,45 @@ namespace CrowFX.EditorTools
                 case SectionKeys.Pregrade:
                     CollectBoolPreviewOverride(overrides, "pregradeEnabled", true);
                     break;
+                case SectionKeys.Posterize:
+                    // Only force a visible level count when quantization is currently a no-op,
+                    // so an authored posterize setup is soloed exactly as configured.
+                    if (!GetBool("usePerChannel") && GetInt("levels") >= 512)
+                        CollectIntPreviewOverride(overrides, "levels", 8);
+                    break;
                 case SectionKeys.Palette:
                     if (GetObject("paletteTex") != null)
                         CollectBoolPreviewOverride(overrides, "usePalette", true);
+                    break;
+                case SectionKeys.LensSensor:
+                    CollectBoolPreviewOverride(overrides, "lensSensorEnabled", true);
+                    if (GetFloat("lensSensorIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "lensSensorIntensity", 1f);
+                    break;
+                case SectionKeys.Film:
+                    CollectBoolPreviewOverride(overrides, "filmEnabled", true);
+                    if (GetFloat("filmIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "filmIntensity", 1f);
+                    break;
+                case SectionKeys.MotionGlitch:
+                    CollectBoolPreviewOverride(overrides, "motionGlitchEnabled", true);
+                    if (GetFloat("motionGlitchIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "motionGlitchIntensity", 0.6f);
+                    break;
+                case SectionKeys.DigitalVideo:
+                    CollectBoolPreviewOverride(overrides, "digitalVideoEnabled", true);
+                    if (GetFloat("digitalVideoIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "digitalVideoIntensity", 0.7f);
+                    break;
+                case SectionKeys.Composite:
+                    CollectBoolPreviewOverride(overrides, "compositeEnabled", true);
+                    if (GetFloat("compositeIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "compositeIntensity", 0.7f);
+                    break;
+                case SectionKeys.Lcd:
+                    CollectBoolPreviewOverride(overrides, "lcdEnabled", true);
+                    if (GetFloat("lcdIntensity") <= 0f)
+                        CollectFloatPreviewOverride(overrides, "lcdIntensity", 0.8f);
                     break;
                 case SectionKeys.TextureMask:
                     if (GetObject("maskTex") != null)
@@ -2223,6 +2924,12 @@ namespace CrowFX.EditorTools
                     if (GetFloat("vhsIntensity") <= 0f)
                         CollectFloatPreviewOverride(overrides, "vhsIntensity", 0.8f);
                     break;
+                default:
+                    Debug.LogError(
+                        $"CrowFX: section '{sectionKey}' offers Solo but has no active override " +
+                        "mapping, so soloing it cannot guarantee the stage is switched on. Add a " +
+                        "case to CaptureActivePreviewOverrides or remove it from _previewActionSections.");
+                    break;
             }
 
             return overrides;
@@ -2230,17 +2937,23 @@ namespace CrowFX.EditorTools
 
         private void ApplySerializedChanges()
         {
-            var targetFx = (CrowImageEffects)target;
             bool changed = serializedObject.ApplyModifiedProperties();
-            if (targetFx == null)
+            if (targets == null)
                 return;
 
             if (changed)
-                FinalizeCommittedTargetChange(targetFx);
-            else
             {
-                CrowFXProfileSync.MarkEffectDirty(targetFx);
-                EnsureDepthModeIfNeeded(targetFx);
+                FinalizeCommittedTargetChanges();
+                return;
+            }
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var fx = targets[i] as CrowImageEffects;
+                if (fx == null) continue;
+
+                CrowFXProfileSync.MarkEffectDirty(fx);
+                EnsureDepthModeIfNeeded(fx);
             }
         }
 
@@ -2369,8 +3082,28 @@ namespace CrowFX.EditorTools
                 SerializedPropertyType.Float => Mathf.Approximately(prop.floatValue, previewOverride.FloatPreviewValue),
                 SerializedPropertyType.Integer => prop.intValue == previewOverride.IntPreviewValue,
                 SerializedPropertyType.Enum => prop.enumValueIndex == previewOverride.IntPreviewValue,
+                SerializedPropertyType.AnimationCurve =>
+                    CurvesMatch(prop.animationCurveValue, previewOverride.CurvePreviewValue),
                 _ => false
             };
+        }
+
+        /// <summary>Keyframe comparison, used to tell whether a previewed curve is still the one
+        /// this override installed. Restoring must not clobber a curve the user edited while the
+        /// preview was active.</summary>
+        private static bool CurvesMatch(AnimationCurve a, AnimationCurve b)
+        {
+            if (a == null || b == null) return ReferenceEquals(a, b);
+            if (a.length != b.length) return false;
+
+            for (int i = 0; i < a.length; i++)
+            {
+                if (!Mathf.Approximately(a[i].time, b[i].time) ||
+                    !Mathf.Approximately(a[i].value, b[i].value))
+                    return false;
+            }
+
+            return true;
         }
 
         private void SetPreviewOverrideValue(PreviewPropertyOverride previewOverride, bool applyPreviewValue)
@@ -2396,7 +3129,35 @@ namespace CrowFX.EditorTools
                 case SerializedPropertyType.Enum:
                     prop.enumValueIndex = applyPreviewValue ? previewOverride.IntPreviewValue : previewOverride.IntOriginalValue;
                     break;
+                case SerializedPropertyType.AnimationCurve:
+                    prop.animationCurveValue = applyPreviewValue
+                        ? previewOverride.CurvePreviewValue
+                        : previewOverride.CurveOriginalValue;
+                    break;
             }
+        }
+
+        /// <summary>Captures a curve override. The palette pass runs whenever the threshold curve
+        /// is non-linear, independently of Use Palette, so muting the Palette section has to flatten
+        /// the curve too or tone remapping survives another section's solo.</summary>
+        private void CollectCurvePreviewOverride(
+            List<PreviewPropertyOverride> overrides, string propertyName, AnimationCurve previewValue)
+        {
+            var prop = serializedObject.FindProperty(propertyName);
+            if (prop == null || prop.propertyType != SerializedPropertyType.AnimationCurve)
+                return;
+
+            var current = prop.animationCurveValue;
+            if (CurvesMatch(current, previewValue))
+                return;
+
+            overrides.Add(new PreviewPropertyOverride
+            {
+                PropertyName = propertyName,
+                PropertyType = SerializedPropertyType.AnimationCurve,
+                CurveOriginalValue = current,
+                CurvePreviewValue = previewValue
+            });
         }
 
         private void SetBool(string propertyName, bool value)
@@ -2580,16 +3341,31 @@ namespace CrowFX.EditorTools
 
                         if (!autoSyncEnabled)
                         {
+                            // Apply pushes the profile outward and is happy to reach every
+                            // selected camera. Save and New read settings inward into an asset,
+                            // which needs one unambiguous source.
                             if (CrowFxEditorUI.MiniPill("Apply Profile", GUILayout.ExpandWidth(true)))
                                 ApplyAssignedProfileToTarget();
 
-                            if (CrowFxEditorUI.MiniPill("Save to Profile", GUILayout.ExpandWidth(true)))
-                                SaveTargetToAssignedProfile();
+                            using (new EnabledScope(GUI.enabled && !IsMultiEditing))
+                            {
+                                if (CrowFxEditorUI.MiniPill("Save to Profile", GUILayout.ExpandWidth(true)))
+                                    SaveTargetToAssignedProfile();
+                            }
                         }
 
-                        if (CrowFxEditorUI.MiniPill("New Profile", GUILayout.ExpandWidth(true)))
-                            CreateProfileFromCurrentSettings();
+                        using (new EnabledScope(GUI.enabled && !IsMultiEditing))
+                        {
+                            if (CrowFxEditorUI.MiniPill("New Profile", GUILayout.ExpandWidth(true)))
+                                CreateProfileFromCurrentSettings();
+                        }
                     }
+
+                    if (IsMultiEditing)
+                        CrowFxEditorUI.Hint(
+                            $"Saving into an asset captures one camera's settings, so it reads " +
+                            $"{TargetName(target)} only and is unavailable across a selection. " +
+                            "Apply Profile still reaches every selected camera.");
 
                     if (string.IsNullOrWhiteSpace(_search) || PassesSearch("shared preset asset"))
                     {
@@ -2617,12 +3393,23 @@ namespace CrowFX.EditorTools
 
         private void ApplyAssignedProfileToTarget()
         {
-            var targetFx = (CrowImageEffects)target;
             var profile = SP("profile")?.objectReferenceValue as CrowFXProfile;
-            if (targetFx == null || profile == null) return;
+            if (targets == null || profile == null) return;
 
             RestorePreviewStatesIfNeeded();
-            CrowFXProfileSync.ApplyToEffect(profile, targetFx);
+            RecordTargetsUndo("Apply CrowFX Profile");
+
+            // ApplyToEffect writes the component directly, so every selection member needs its
+            // own call. A multi-selection only reaches here when they share one profile anyway,
+            // since SP("profile") reports no value when they differ.
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var fx = targets[i] as CrowImageEffects;
+                if (fx == null) continue;
+
+                CrowFXProfileSync.ApplyToEffect(profile, fx);
+            }
+
             serializedObject.Update();
             GUI.FocusControl(null);
         }
@@ -2692,10 +3479,10 @@ namespace CrowFX.EditorTools
                 return;
 
             RestorePreviewStatesIfNeeded();
-            Undo.RecordObject(targetFx, $"Randomize {sectionKey}");
+            RecordTargetsUndo($"Randomize {sectionKey}");
             RandomizeProps(props);
             serializedObject.ApplyModifiedProperties();
-            FinalizeCommittedTargetChange(targetFx);
+            FinalizeCommittedTargetChanges();
         }
 
         private void RandomizeAllProperties()
@@ -2704,13 +3491,13 @@ namespace CrowFX.EditorTools
             if (targetFx == null) return;
 
             RestorePreviewStatesIfNeeded();
-            Undo.RecordObject(targetFx, "Randomize All");
+            RecordTargetsUndo("Randomize All");
 
             foreach (var props in _propsBySection.Values)
                 RandomizeProps(props);
 
             serializedObject.ApplyModifiedProperties();
-            FinalizeCommittedTargetChange(targetFx);
+            FinalizeCommittedTargetChanges();
         }
 
         private void RandomizeProps(List<string> props)
@@ -2777,7 +3564,7 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(pregradeEnabled))
                 DrawPropertyField(pregradeEnabled, "Enable Pregrade");
 
-            bool enabled = pregradeEnabled != null && pregradeEnabled.boolValue;
+            bool enabled = AuthoredBool(pregradeEnabled);
             if (enabled)
             {
                 DrawPropertyField(exposure, "Exposure");
@@ -2787,6 +3574,8 @@ namespace CrowFX.EditorTools
                 DrawPropertyField(pregradeTint, "Color Filter");
                 DrawPropertyField(pregradeTintStrength, "Filter Strength");
             }
+
+            DrawPregradeMiniPreview(enabled);
 
             MarkDrawnMany("pregradeEnabled", "exposure", "contrast", "gamma", "saturation", "pregradeTint", "pregradeTintStrength");
 
@@ -2804,6 +3593,12 @@ namespace CrowFX.EditorTools
             DrawAutoRemaining(SectionKeys.Pregrade);
         }
 
+        private void DrawPregradeMiniPreview(bool enabled)
+        {
+            if (!enabled) return;
+            DrawLivePreview("Grade Preview", CrowImageEffects.PreviewStage.Pregrade);
+        }
+
         private void DrawSamplingContent()
         {
             BeginSectionDrawn();
@@ -2811,6 +3606,8 @@ namespace CrowFX.EditorTools
             var pixelSize = SP("pixelSize");
             var useVirtualGrid = SP("useVirtualGrid");
             var virtualResolution = SP("virtualResolution");
+            var samplingFilter = SP("samplingFilter");
+            var pixelAspect = SP("pixelAspect");
 
             if (PropMatchesSearch(pixelSize))
                 DrawPropertyField(pixelSize, "Pixel Block Size");
@@ -2820,7 +3617,12 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(useVirtualGrid))
                 DrawPropertyField(useVirtualGrid, "Lock to Virtual Grid");
 
-            bool grid = useVirtualGrid != null && useVirtualGrid.boolValue;
+            bool grid = AuthoredBool(useVirtualGrid);
+
+            if (PropMatchesSearch(samplingFilter))
+                DrawPropertyField(samplingFilter, "Sampling Filter");
+
+            DrawSamplingMiniPreview(pixelSize, useVirtualGrid, virtualResolution, pixelAspect, samplingFilter);
 
             if (grid)
             {
@@ -2849,9 +3651,68 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint("Off = sampling follows the backbuffer resolution (may cause shimmering on resize).");
             }
 
-            MarkDrawnMany("pixelSize", "useVirtualGrid", "virtualResolution");
+            MarkDrawnMany("pixelSize", "useVirtualGrid", "virtualResolution", "samplingFilter");
 
             DrawAutoRemaining(SectionKeys.Sampling);
+        }
+
+        private void DrawSamplingMiniPreview(
+            SerializedProperty pixelSize,
+            SerializedProperty useVirtualGrid,
+            SerializedProperty virtualResolution,
+            SerializedProperty pixelAspect,
+            SerializedProperty samplingFilter)
+        {
+            int block = AuthoredInt(pixelSize);
+            bool grid = AuthoredBool(useVirtualGrid);
+            Vector2Int res = virtualResolution != null ? virtualResolution.vector2IntValue : new Vector2Int(720, 480);
+            float aspect = pixelAspect != null ? pixelAspect.floatValue : 1f;
+            var filter = samplingFilter != null
+                ? (CrowImageEffects.SamplingFilter)samplingFilter.enumValueIndex
+                : CrowImageEffects.SamplingFilter.Point;
+
+            GetPreviewSourceResolution(target as CrowImageEffects, out int srcW, out int srcH);
+
+            // Sampling has no enable toggle: the stage is skipped entirely at block size 1 with
+            // no virtual grid, so a preview there would just show an unmodified chart.
+            if (block > 1 || grid)
+            {
+                DrawLivePreview("Sampling Preview", CrowImageEffects.PreviewStage.Sampling,
+                    CrowFxPreviewDrawers.DescribeSampling(block, grid, res, aspect, filter, srcW, srcH));
+            }
+
+            if (samplingFilter != null &&
+                filter != CrowImageEffects.SamplingFilter.Box &&
+                CrowFxPreviewDrawers.SamplingWouldBenefitFromBox(block, grid, res, aspect, srcW, srcH) &&
+                (string.IsNullOrWhiteSpace(_search) || PassesSearch("box filter alias shimmer crawl sampling")))
+            {
+                DrawActionHint(
+                    "Each cell covers several source texels. Point and Bilinear read one position per cell, so thin geometry and highlights shimmer as the camera moves.",
+                    "Use Box",
+                    () =>
+                    {
+                        samplingFilter.enumValueIndex = (int)CrowImageEffects.SamplingFilter.Box;
+                        ApplySerializedChanges();
+                    },
+                    CrowFxEditorUI.HintType.Info);
+            }
+        }
+
+        /// <summary>Resolution the stack will actually process, taken from the camera this component
+        /// renders on. Falls back to a 1080p reference when that camera reports nothing useful, so the
+        /// texels-per-cell readout stays stable instead of drifting with the editor layout.</summary>
+        private static void GetPreviewSourceResolution(CrowImageEffects effect, out int width, out int height)
+        {
+            var cam = effect != null ? effect.GetComponent<Camera>() : null;
+            if (cam != null && cam.pixelWidth > 1 && cam.pixelHeight > 1)
+            {
+                width = cam.pixelWidth;
+                height = cam.pixelHeight;
+                return;
+            }
+
+            width = 1920;
+            height = 1080;
         }
 
         private void DrawPosterizeContent()
@@ -2979,7 +3840,7 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(usePalette))
                 DrawPropertyField(usePalette, "Enable Palette Mapping");
 
-            if (usePalette != null && usePalette.boolValue)
+            if (AuthoredBool(usePalette))
             {
                 DrawPropertyField(paletteMode, "Palette Mode");
                 DrawPropertyField(thresholdCurve, "Threshold Curve");
@@ -3031,6 +3892,26 @@ namespace CrowFX.EditorTools
                 CrowFxEditorUI.Hint("Enable Palette Mapping to reveal the palette texture and tone-remap controls.");
             }
 
+            if (AuthoredBool(usePalette))
+            {
+                var paletteColorCount = SP("paletteColorCount");
+
+                // The swatch strip shows which colours CrowFX will actually scan, which the
+                // rendered result cannot: a palette can be mis-sized or mis-imported and still
+                // produce a plausible-looking image.
+                DrawMiniPreview("Palette Swatches", "PaletteSwatches", 44f, rect => CrowFxPreviewDrawers.Palette(
+                    rect,
+                    paletteTex != null ? paletteTex.objectReferenceValue as Texture2D : null,
+                    paletteMode != null
+                        ? (CrowImageEffects.PaletteMode)paletteMode.enumValueIndex
+                        : CrowImageEffects.PaletteMode.Nearest,
+                    paletteColorCount != null ? paletteColorCount.intValue : 16,
+                    thresholdCurve != null ? thresholdCurve.animationCurveValue : null,
+                    false));
+
+                DrawLivePreview("Palette Result", CrowImageEffects.PreviewStage.Palette);
+            }
+
             MarkDrawnMany("thresholdCurve", "usePalette", "paletteMode", "paletteTex");
             DrawAutoRemaining(SectionKeys.Palette);
         }
@@ -3046,7 +3927,7 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(useMask))
                 DrawPropertyField(useMask, "Enable Texture Mask");
 
-            if (useMask != null && useMask.boolValue)
+            if (AuthoredBool(useMask))
             {
                 DrawPropertyField(maskTex, "Mask Texture");
                 DrawPropertyField(maskThreshold, "Mask Threshold");
@@ -3063,6 +3944,22 @@ namespace CrowFX.EditorTools
                 }
                 else
                     CrowFxEditorUI.Hint("White = effect applied, Black = original image (threshold determines cutoff).");
+
+                var maskSoftness = SP("maskSoftness");
+                var maskOpacity = SP("maskOpacity");
+                var maskInvert = SP("maskInvert");
+                var maskChannel = SP("maskChannel");
+
+                DrawMiniPreview("Mask Response", "TextureMask", 84f, rect => CrowFxPreviewDrawers.TextureMask(
+                    rect,
+                    maskTex != null ? maskTex.objectReferenceValue as Texture2D : null,
+                    maskThreshold != null ? maskThreshold.floatValue : 0.5f,
+                    maskSoftness != null ? maskSoftness.floatValue : 0.1f,
+                    maskOpacity != null ? maskOpacity.floatValue : 1f,
+                    maskInvert != null && maskInvert.boolValue,
+                    maskChannel != null
+                        ? (CrowImageEffects.MaskChannel)maskChannel.enumValueIndex
+                        : CrowImageEffects.MaskChannel.Luminance));
             }
             else
             {
@@ -3084,19 +3981,32 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(useDepthMask))
                 DrawPropertyField(useDepthMask, "Enable Depth Mask");
 
-            if (useDepthMask != null && useDepthMask.boolValue)
+            if (AuthoredBool(useDepthMask))
             {
                 DrawPropertyField(depthThreshold, "Depth Threshold");
 
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("attenuates distance depth texture"))
                     CrowFxEditorUI.Hint("Attenuates effects based on distance from camera. Automatically enables depth texture.");
 
-                if (NeedsDepthFix((CrowImageEffects)target))
+                if (AnyTargetNeedsDepthFix())
                 {
                     DrawActionHint("Camera depth texture is still off for this camera.", "Enable Depth",
                         EnableDepthOnTarget,
                         CrowFxEditorUI.HintType.Warning);
                 }
+
+                var depthFar = SP("depthFar");
+                var depthSoftness = SP("depthSoftness");
+                var depthOpacity = SP("depthOpacity");
+                var depthInvert = SP("depthInvert");
+
+                DrawMiniPreview("Depth Response", "DepthMask", 80f, rect => CrowFxPreviewDrawers.DepthMask(
+                    rect,
+                    depthThreshold != null ? depthThreshold.floatValue : 1f,
+                    depthFar != null ? depthFar.floatValue : 1000f,
+                    depthSoftness != null ? depthSoftness.floatValue : 0.25f,
+                    depthOpacity != null ? depthOpacity.floatValue : 1f,
+                    depthInvert != null && depthInvert.boolValue));
             }
 
             MarkDrawnMany("useDepthMask", "depthThreshold");
@@ -3125,12 +4035,13 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(pEnabled))
                 DrawPropertyField(pEnabled, "Enable Jitter");
 
-            DrawJitterPresetButtons();
-
-            bool enabled = pEnabled != null && pEnabled.boolValue;
+            bool enabled = AuthoredBool(pEnabled);
 
             if (enabled)
             {
+                DrawJitterPresetButtons();
+                DrawLivePreview("Jitter Preview", CrowImageEffects.PreviewStage.Jitter);
+
                 GUILayout.Space(6);
                 DrawJitterStrengthAndAmount(pStrength, pAmountPx);
                 GUILayout.Space(6);
@@ -3346,10 +4257,30 @@ namespace CrowFX.EditorTools
 
             DrawPropertyField(bleedBlend, "Bleed Mix");
             DrawPropertyField(bleedIntensity, "Shift Distance");
-            DrawBleedPresetButtons();
 
-            bool active = bleedBlend != null && bleedBlend.floatValue > 0f &&
-                        bleedIntensity != null && bleedIntensity.floatValue > 0f;
+            // Bleed has no enable toggle: it is off when either gate is zero. Everything past
+            // the two gates stays hidden until it can actually do something.
+            bool active = AuthoredFloat(bleedBlend) > 0f && AuthoredFloat(bleedIntensity) > 0f;
+
+            if (!active)
+            {
+                if (string.IsNullOrWhiteSpace(_search) || PassesSearch("bleed mix shift distance"))
+                    CrowFxEditorUI.Hint("Raise Bleed Mix and Shift Distance to activate the effect.");
+
+                MarkDrawnMany(
+                    "bleedBlend", "bleedIntensity", "bleedMode", "bleedBlendMode",
+                    "shiftR", "shiftG", "shiftB",
+                    "bleedEdgeOnly", "bleedEdgeThreshold", "bleedEdgePower",
+                    "bleedRadialCenter", "bleedRadialStrength",
+                    "bleedSamples", "bleedSmear", "bleedFalloff",
+                    "bleedIntensityR", "bleedIntensityG", "bleedIntensityB", "bleedAnamorphic",
+                    "bleedClampUV", "bleedPreserveLuma",
+                    "bleedWobbleAmp", "bleedWobbleFreq", "bleedWobbleScanline");
+                return;
+            }
+
+            DrawBleedPresetButtons();
+            DrawLivePreview("Bleed Preview", CrowImageEffects.PreviewStage.Bleed);
 
             GUILayout.Space(6);
 
@@ -3365,9 +4296,6 @@ namespace CrowFX.EditorTools
                 shiftBValue: SP("shiftB") != null ? SP("shiftB").vector2Value : Vector2.zero,
                 radialCenterValue: SP("bleedRadialCenter") != null ? SP("bleedRadialCenter").vector2Value : new Vector2(0.5f, 0.5f),
                 radialStrengthValue: SP("bleedRadialStrength") != null ? SP("bleedRadialStrength").floatValue : 1f);
-
-            if (!active && (string.IsNullOrWhiteSpace(_search) || PassesSearch("bleed mix shift distance")))
-                CrowFxEditorUI.Hint("Raise Bleed Mix and Shift Distance to activate the effect.");
 
             if (string.IsNullOrWhiteSpace(_search) || AnyMatch(bleedMode, bleedBlendMode))
                 DrawSubSection("Mode & Combine",              "d_Rigidbody Icon",         _foldBleedModeCombine, () => DrawBleedModeCombine(active),    "how to shift");
@@ -3619,21 +4547,46 @@ namespace CrowFX.EditorTools
 
         private void EnableDepthOnTarget()
         {
-            var targetFx = (CrowImageEffects)target;
-            if (targetFx == null) return;
+            if (targets == null) return;
 
-            var camera = targetFx.GetComponent<Camera>();
-            if (camera == null) return;
+            // Every selected component sits on its own camera, and the hint that offers this fix
+            // appears whenever any of them lacks depth, so fix all of them.
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var fx = targets[i] as CrowImageEffects;
+                if (fx == null) continue;
 
-            camera.depthTextureMode |= DepthTextureMode.Depth;
-            EditorUtility.SetDirty(camera);
+                var camera = fx.GetComponent<Camera>();
+                if (camera == null) continue;
+
+                Undo.RecordObject(camera, "Enable Camera Depth");
+                camera.depthTextureMode |= DepthTextureMode.Depth;
+                EditorUtility.SetDirty(camera);
+            }
         }
 
-        private void DrawMiniPreview(string title, float height, Action<Rect> drawBody)
-        {
-            GUILayout.Space(6);
-            EditorGUILayout.LabelField(title, CrowFxEditorUI.Styles.SubHeaderLabel);
+        // Every preview is collapsible. Folds are created on first draw and keyed explicitly
+        // rather than by title, because some titles carry live values ("Animated Preview (12
+        // levels)") and others repeat across sections, so titles are neither stable nor unique.
+        private readonly Dictionary<string, AnimBool> _previewFolds = new(StringComparer.Ordinal);
 
+        private AnimBool GetPreviewFold(string key)
+        {
+            if (_previewFolds.TryGetValue(key, out var fold)) return fold;
+
+            fold = NewFold("Preview." + key, defaultExpanded: true);
+            _previewFolds[key] = fold;
+            return fold;
+        }
+
+        private void DrawMiniPreview(string title, string foldKey, float height, Action<Rect> drawBody)
+        {
+            DrawSubSection(title, "d_ViewToolOrbit", GetPreviewFold(foldKey),
+                () => DrawMiniPreviewBody(height, drawBody), "diagram");
+        }
+
+        private void DrawMiniPreviewBody(float height, Action<Rect> drawBody)
+        {
             var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
             rect.xMin += 2f;
             rect.xMax -= 2f;
@@ -3677,7 +4630,7 @@ namespace CrowFX.EditorTools
                 ? $"Animated Preview ({animatedLevels} levels)"
                 : "Preview";
 
-            DrawMiniPreview(title, previewPerChannel ? 72f : (previewAnimated ? 72f : 48f), rect =>
+            DrawMiniPreview(title, "Posterize", previewPerChannel ? 72f : (previewAnimated ? 72f : 48f), rect =>
             {
                 if (previewPerChannel)
                 {
@@ -3735,7 +4688,7 @@ namespace CrowFX.EditorTools
             if (targetFx == null)
                 return;
 
-            Undo.RecordObject(targetFx, undoLabel);
+            RecordTargetsUndo(undoLabel);
             GUIUtility.hotControl = controlId;
             _bleedPreviewHandleMode = mode;
             _bleedPreviewDragStartStrength = startStrength;
@@ -3960,7 +4913,7 @@ namespace CrowFX.EditorTools
                 EndBleedPreviewDrag();
 
             float previewHeight = Mathf.Clamp(EditorGUIUtility.currentViewWidth * 0.3f, 98f, 122f);
-            DrawMiniPreview("Preview", previewHeight, rect =>
+            DrawMiniPreview("Preview", "BleedVectors", previewHeight, rect =>
             {
                 var previewRect = GetCenteredSquareRect(rect);
                 var evt = Event.current;
@@ -4138,7 +5091,7 @@ namespace CrowFX.EditorTools
             float ghostBlend,
             CrowImageEffects.GhostCombineMode combineMode)
         {
-            DrawMiniPreview("Trail Preview", 92f, rect =>
+            DrawMiniPreview("Trail Preview", "GhostTrail", 92f, rect =>
             {
                 int count = Mathf.Clamp(frames, 1, 16);
                 int delaySteps = Mathf.Max(0, startDelay);
@@ -4251,7 +5204,7 @@ namespace CrowFX.EditorTools
 
             DrawGhostPresetButtons();
 
-            bool enabled = ghostEnabled != null && ghostEnabled.boolValue;
+            bool enabled = AuthoredBool(ghostEnabled);
             if (enabled)
             {
                 DrawPropertyField(ghostBlend, "Trail Blend");
@@ -4326,13 +5279,34 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(edgeEnabled))
                 DrawPropertyField(edgeEnabled, "Enable Edges");
 
-            bool enabled = edgeEnabled != null && edgeEnabled.boolValue;
+            bool enabled = AuthoredBool(edgeEnabled);
             if (enabled)
             {
                 DrawPropertyField(edgeStrength, "Outline Strength");
                 DrawPropertyField(edgeThreshold, "Depth Threshold");
                 DrawPropertyField(edgeBlend, "Outline Blend");
                 DrawPropertyField(edgeColor, "Outline Color");
+
+                var edgeThickness = SP("edgeThickness");
+                var edgeUseNormals = SP("edgeUseNormals");
+                bool normalsAvailable =
+                    CrowImageEffects.GetSceneBufferSupport() != CrowImageEffects.SceneBufferSupport.Unsupported;
+
+                DrawMiniPreview("Outline Preview", "EdgeOutline", 84f, rect => CrowFxPreviewDrawers.Edges(
+                    rect,
+                    edgeColor != null ? edgeColor.colorValue : Color.black,
+                    edgeThickness != null ? edgeThickness.floatValue : 1f,
+                    edgeBlend != null ? edgeBlend.floatValue : 1f,
+                    edgeStrength != null ? edgeStrength.floatValue : 1f,
+                    edgeUseNormals != null && edgeUseNormals.boolValue,
+                    normalsAvailable));
+
+                if (edgeUseNormals != null && edgeUseNormals.boolValue && !normalsAvailable)
+                {
+                    CrowFxEditorUI.Hint(
+                        "The active render pipeline does not expose a normal buffer CrowFX can read, so outlines fall back to depth-only detection.",
+                        CrowFxEditorUI.HintType.Warning);
+                }
             }
 
             MarkDrawnMany("edgeEnabled", "edgeStrength", "edgeThreshold", "edgeBlend", "edgeColor");
@@ -4347,7 +5321,7 @@ namespace CrowFX.EditorTools
                 if (string.IsNullOrWhiteSpace(_search) || PassesSearch("depth outline requires camera depth"))
                     CrowFxEditorUI.Hint("Depth-based outline effect. Requires camera depth.");
 
-                if (NeedsDepthFix((CrowImageEffects)target))
+                if (AnyTargetNeedsDepthFix())
                 {
                     DrawActionHint("Camera depth texture is still off for outlines.", "Enable Depth",
                         EnableDepthOnTarget,
@@ -4375,7 +5349,7 @@ namespace CrowFX.EditorTools
 
             DrawUnsharpPresetButtons();
 
-            bool enabled = unsharpEnabled != null && unsharpEnabled.boolValue;
+            bool enabled = AuthoredBool(unsharpEnabled);
             if (enabled)
             {
                 DrawPropertyField(sharpenMode, "Algorithm");
@@ -4391,6 +5365,8 @@ namespace CrowFX.EditorTools
                     if (unsharpChroma != null && PropMatchesSearch(unsharpChroma))
                         EditorGUILayout.Slider(unsharpChroma, 0f, 1f, PropLabel(unsharpChroma, "Chroma Amount"));
                 }
+
+                DrawLivePreview("Sharpen Preview", CrowImageEffects.PreviewStage.Unsharp);
             }
 
             MarkDrawnMany("unsharpEnabled", "unsharpAmount", "unsharpRadius", "unsharpThreshold", "unsharpLumaOnly", "unsharpChroma", "sharpenMode");
@@ -4427,7 +5403,7 @@ namespace CrowFX.EditorTools
             if (PropMatchesSearch(ditherMode))
                 DrawPropertyField(ditherMode, "Pattern");
 
-            bool hasDither = ditherMode != null && ditherMode.enumValueIndex != (int)CrowImageEffects.DitherMode.None;
+            bool hasDither = AuthoredEnum(ditherMode) != (int)CrowImageEffects.DitherMode.None;
             int modeIndex = ditherMode != null ? ditherMode.enumValueIndex : (int)CrowImageEffects.DitherMode.None;
 
             if (hasDither)
@@ -4519,9 +5495,25 @@ namespace CrowFX.EditorTools
                     CrowFxEditorUI.Hint("Pattern is Off, so only posterization remains. Enable a dither pattern to reduce visible banding.");
             }
 
+            if (hasDither)
+                DrawDitherMiniPreview();
+
             MarkDrawnMany("ditherMode", "ditherStrength", "ditherSize", "ditherAngle", "blueNoise", "temporalDither", "temporalDitherRate", "halftoneScale", "halftoneDotGain", "halftoneAreaModulation", "halftoneColorMode");
 
             DrawAutoRemaining(SectionKeys.Dither);
+        }
+
+        private void DrawDitherMiniPreview()
+        {
+            // The dither stage also performs quantization, so this preview covers the
+            // Posterize section's level settings as well as the pattern controls.
+            var levelsProp = SP("levels");
+            int levels = levelsProp != null ? levelsProp.intValue : 512;
+            string note = levels >= 512
+                ? "quantization off - lower Posterize levels to see the pattern"
+                : null;
+
+            DrawLivePreview("Pattern Preview", CrowImageEffects.PreviewStage.Quantize, note);
         }
 
         private static string GetHalftoneColorModeHint(SerializedProperty colorMode)
@@ -4556,14 +5548,23 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("lensSensorEnabled");
             DrawPropertyField(enabled, "Enable Lens & Sensor");
-            DrawLensPresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawLensPresetButtons();
+                DrawLivePreview("Lens & Sensor Preview", CrowImageEffects.PreviewStage.LensSensor);
                 DrawPropertyField(SP("lensSensorIntensity"), "Stage Mix");
                 CrowFxEditorUI.Hint("Acquisition-stage optics are evaluated before film, grading artifacts, and display simulation.");
                 DrawSubSection("Optical Geometry", "d_Camera Icon", _foldLensOptics, () =>
                 {
                     DrawPropertyField(SP("lensDistortion"), "Lens Distortion");
+
+                    var distortion = SP("lensDistortion");
+                    if (distortion != null && distortion.floatValue < 0f)
+                    {
+                        DrawPropertyField(SP("lensEdgeMode"), "Uncovered Edges");
+                        CrowFxEditorUI.Hint("Pincushion pulls the image away from the frame edge, leaving output pixels with no source behind them. Overscan magnifies until the distorted image covers the output, the way a sensor crops a lens image circle.");
+                    }
+
                     DrawPropertyField(SP("lensChromaticAberration"), "Lateral CA (px)");
                     DrawPropertyField(SP("lensVignette"), "Optical Vignette");
                 }, "glass + image circle");
@@ -4581,8 +5582,9 @@ namespace CrowFX.EditorTools
             }
             else CrowFxEditorUI.Hint("Enable Lens & Sensor to shape acquisition before downstream media effects.");
 
-            MarkDrawnMany("lensSensorEnabled", "lensSensorIntensity", "lensDistortion", "lensChromaticAberration",
-                "lensVignette", "lensBloom", "lensBloomRadius", "sensorRollingShutter", "sensorNoise", "sensorDeadPixels");
+            MarkDrawnMany("lensSensorEnabled", "lensSensorIntensity", "lensDistortion", "lensEdgeMode",
+                "lensChromaticAberration", "lensVignette", "lensBloom", "lensBloomRadius",
+                "sensorRollingShutter", "sensorNoise", "sensorDeadPixels");
             DrawAutoRemaining(SectionKeys.LensSensor);
         }
 
@@ -4591,9 +5593,10 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("filmEnabled");
             DrawPropertyField(enabled, "Enable Film Emulation");
-            DrawFilmPresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawFilmPresetButtons();
+                DrawLivePreview("Film Preview", CrowImageEffects.PreviewStage.Film);
                 DrawPropertyField(SP("filmIntensity"), "Stock Mix");
                 CrowFxEditorUI.Hint("Film remains color-aware: grain follows density, while halation is highlight-gated and red-biased.");
                 DrawSubSection("Stock & Grain", "d_PreTextureMipMapHigh", _foldFilmGrain, () =>
@@ -4610,14 +5613,24 @@ namespace CrowFX.EditorTools
                 DrawSubSection("Transport & Damage", "d_Animation.Play", _foldFilmDamage, () =>
                 {
                     DrawPropertyField(SP("filmGateWeave"), "Gate Weave (px)");
-                    DrawPropertyField(SP("filmDust"), "Dust");
+                    DrawPropertyField(SP("filmDust"), "Dust Density");
+
+                    var dust = SP("filmDust");
+                    if (dust != null && dust.floatValue > 0f)
+                    {
+                        DrawPropertyField(SP("filmDustOpacity"), "Dust Opacity");
+                        DrawPropertyField(SP("filmDustPolarity"), "Bright / Dark Balance");
+                        CrowFxEditorUI.Hint("Bright particles are dust on the negative blocking printing light, which is what release prints accumulate. Dark particles are dirt on the print or in the projector gate. Opacity thins the fine grit first, since large debris blocks light completely on its own.");
+                    }
+
                     DrawPropertyField(SP("filmScratches"), "Scratches");
                 }, "mechanical instability");
             }
             else CrowFxEditorUI.Hint("Enable Film Emulation for stock grain, halation, transport movement, and physical damage.");
 
             MarkDrawnMany("filmEnabled", "filmIntensity", "filmGrain", "filmGrainSize", "filmHalation",
-                "filmHalationRadius", "filmGateWeave", "filmDust", "filmScratches", "filmFlicker");
+                "filmHalationRadius", "filmGateWeave", "filmDust", "filmDustOpacity", "filmDustPolarity",
+                "filmScratches", "filmFlicker");
             DrawAutoRemaining(SectionKeys.Film);
         }
 
@@ -4626,9 +5639,9 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("motionGlitchEnabled");
             DrawPropertyField(enabled, "Enable Motion & Datamosh");
-            DrawMotionPresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawMotionPresetButtons();
                 DrawPropertyField(SP("motionGlitchIntensity"), "Corruption Mix");
                 CrowFxEditorUI.Hint("Uses camera motion vectors and a previous-frame buffer; static imagery remains substantially cleaner than moving regions.");
                 DrawSubSection("Motion Blocks", "d_AnimationClip Icon", _foldMotionBlocks, () =>
@@ -4657,9 +5670,10 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("digitalVideoEnabled");
             DrawPropertyField(enabled, "Enable Digital Video");
-            DrawDigitalPresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawDigitalPresetButtons();
+                DrawLivePreview("Digital Video Preview", CrowImageEffects.PreviewStage.DigitalVideo);
                 DrawPropertyField(SP("digitalVideoIntensity"), "Codec Mix");
                 CrowFxEditorUI.Hint("Compression artifacts are applied before analog transport and display stages, matching a decoded digital source.");
                 DrawSubSection("Codec Structure", "d_GridLayoutGroup Icon", _foldDigitalCodec, () =>
@@ -4687,9 +5701,10 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("compositeEnabled");
             DrawPropertyField(enabled, "Enable Composite Signal");
-            DrawCompositePresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawCompositePresetButtons();
+                DrawLivePreview("Composite Preview", CrowImageEffects.PreviewStage.Composite);
                 DrawPropertyField(SP("compositeIntensity"), "Signal Mix");
                 CrowFxEditorUI.Hint("RGB is encoded into luma/chroma signal space, bandwidth-limited, phase-disturbed, then decoded back to RGB.");
                 DrawSubSection("Encoder & Channel", "d_PreTextureRGB", _foldCompositeEncode, () =>
@@ -4717,9 +5732,10 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("lcdEnabled");
             DrawPropertyField(enabled, "Enable LCD Display");
-            DrawLcdPresetButtons();
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawLcdPresetButtons();
+                DrawLivePreview("LCD Preview", CrowImageEffects.PreviewStage.Lcd);
                 DrawPropertyField(SP("lcdIntensity"), "Panel Mix");
                 CrowFxEditorUI.Hint("LCD is a presentation stage. Avoid enabling CRT simultaneously unless the intended look is a screen filmed from another display.");
                 DrawSubSection("Pixel Matrix", "d_GridLayoutGroup Icon", _foldLcdMatrix, () =>
@@ -4750,8 +5766,19 @@ namespace CrowFX.EditorTools
             {
                 GUILayout.Label("MY ASSET LOOKS", CrowFxEditorUI.Styles.SubHeaderLabel);
                 CrowFxEditorUI.Hint("Repository-friendly custom looks saved under CrowFX/Presets.");
-                if (CrowFxEditorUI.MiniPill("SAVE CURRENT AS NEW LOOK", GUILayout.ExpandWidth(true)))
-                    CreatePresetFromCurrentControls();
+
+                // Bookmarking captures the current controls into a new asset, so it needs one
+                // component to read rather than a selection that may disagree.
+                using (new EnabledScope(GUI.enabled && !IsMultiEditing))
+                {
+                    if (CrowFxEditorUI.MiniPill("SAVE CURRENT AS NEW LOOK", GUILayout.ExpandWidth(true)))
+                        CreatePresetFromCurrentControls();
+                }
+
+                if (IsMultiEditing)
+                    CrowFxEditorUI.Hint(
+                        $"Select a single CrowFX component to save its controls as a new look. " +
+                        $"Applying an existing look still reaches all {TargetCount}.");
             }
 
             var customMatches = CollectVisibleAssetLooks();
@@ -4785,6 +5812,10 @@ namespace CrowFX.EditorTools
         {
             if (EditorApplication.timeSinceStartup < _nextPresetAssetRefresh) return;
             _nextPresetAssetRefresh = EditorApplication.timeSinceStartup + 2.0;
+
+            // Recipes are derived from the assets being reloaded here, so they expire with them.
+            _presetRecipeCache.Clear();
+
             DataDrivenPresets.Clear();
             string[] guids = AssetDatabase.FindAssets("t:CrowFXPresetAsset");
             for (int i = 0; i < guids.Length; i++)
@@ -4803,6 +5834,7 @@ namespace CrowFX.EditorTools
             {
                 var preset = DataDrivenPresets[i];
                 if (preset == null || !string.IsNullOrEmpty(preset.SourceLookId)) continue;
+                if (_fullPresetFavoritesOnly && !IsAssetLookFavorite(preset)) continue;
                 if (query.Length > 0 &&
                     (preset.displayName?.IndexOf(query, StringComparison.OrdinalIgnoreCase) ?? -1) < 0 &&
                     (preset.description?.IndexOf(query, StringComparison.OrdinalIgnoreCase) ?? -1) < 0 &&
@@ -4857,36 +5889,40 @@ namespace CrowFX.EditorTools
         private void DrawAssetLookBrowserRow(CrowFXPresetAsset preset)
         {
             string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
-            string detail = $"{preset.usage}  ·  {preset.gpuTier}  ·  COMPLETE STACK";
-            bool selected = _selectedLookIsAsset && preset == _selectedAssetLook;
+            bool selected = _assetLookSelectionActive && preset == _selectedAssetLook;
             Color tint = new Color(0.38f, 0.72f, 0.82f, 1f);
-            float buttonHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
-            float savedWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, "SAVED", 54f);
-            float contentWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - savedWidth - 94f);
-            float nameHeight = CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f);
-            float detailHeight = Mathf.Max(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.RowDetail, 18f),
-                CrowFxEditorUI.Styles.RowDetail.CalcHeight(new GUIContent(detail), contentWidth) + 2f);
-            float rowHeight = Mathf.Max(buttonHeight + 10f, nameHeight + detailHeight + 6f);
+
+            // Matches the authored rows: one line, name only. The second line used to repeat
+            // "usage · tier · COMPLETE STACK", which is identical for most assets, and the row
+            // carried a SAVED button whose click result was discarded - a control that looked
+            // interactive but could not do anything.
+            float rowHeight = Mathf.Max(20f, CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f));
             var rect = GUILayoutUtility.GetRect(0f, rowHeight, GUILayout.ExpandWidth(true));
-            var savedRect = new Rect(rect.xMax - savedWidth - 5f, rect.y + (rect.height - buttonHeight) * 0.5f, savedWidth, buttonHeight);
-            var selectRect = new Rect(rect.x, rect.y, rect.width - savedWidth - 10f, rect.height);
+
+            const float starWidth = 18f;
+            var starRect = new Rect(rect.xMax - starWidth - 4f, rect.y + (rect.height - 16f) * 0.5f, starWidth, 16f);
+            var selectRect = new Rect(rect.x, rect.y, rect.width - starWidth - 8f, rect.height);
 
             if (Event.current.type == EventType.Repaint)
             {
-                EditorGUI.DrawRect(rect, selected ? new Color(tint.r, tint.g, tint.b, 0.34f) : new Color(1f, 1f, 1f, 0.025f));
-                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height), new Color(tint.r, tint.g, tint.b, 0.9f));
-                CrowFxEditorUI.Theme.DrawBorder(rect);
+                EditorGUI.DrawRect(rect, selected
+                    ? new Color(tint.r, tint.g, tint.b, 0.45f)
+                    : new Color(1f, 1f, 1f, 0.02f));
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, selected ? 4f : 2f, rect.height),
+                    new Color(tint.r, tint.g, tint.b, selected ? 1f : 0.45f));
             }
 
             if (GUI.Button(selectRect, new GUIContent(string.Empty, preset.description), GUIStyle.none))
                 SelectAssetLook(preset);
 
-            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, nameHeight);
-            var detailRect = new Rect(rect.x + 10f, nameRect.yMax, selectRect.width - 16f, detailHeight);
+            var nameRect = new Rect(rect.x + 12f, rect.y, selectRect.width - 16f, rect.height);
+            var previousColor = GUI.contentColor;
+            GUI.contentColor = selected ? Color.white : new Color(1f, 1f, 1f, 0.72f);
             GUI.Label(nameRect, label, CrowFxEditorUI.Styles.SubHeaderLabel);
-            GUI.Label(detailRect, detail, CrowFxEditorUI.Styles.RowDetail);
+            GUI.contentColor = previousColor;
 
-            GUI.Button(savedRect, new GUIContent("SAVED", "Asset looks are already persistent project assets."), EditorStyles.miniButton);
+            if (DrawRowFavoriteStar(starRect, IsAssetLookFavorite(preset)))
+                ToggleAssetLookFavorite(preset);
         }
 
         private void DrawCrtContent()
@@ -4894,10 +5930,11 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("crtEnabled");
             DrawPropertyField(enabled, "Enable CRT");
-            DrawCrtPresetButtons();
 
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawCrtPresetButtons();
+                DrawLivePreview("CRT Preview", CrowImageEffects.PreviewStage.Crt);
                 CrowFxEditorUI.Hint("Display pass ordered after VHS: source-line resampling drives a luminance-aware electron beam, then phosphor structure, glass glow, and tube geometry are applied.");
 
                 DrawSubSection("Tube Geometry", "d_RectTransformBlueprint", _foldCrtGeometry, () =>
@@ -4956,10 +5993,11 @@ namespace CrowFX.EditorTools
             BeginSectionDrawn();
             var enabled = SP("vhsEnabled");
             DrawPropertyField(enabled, "Enable VHS");
-            DrawVhsPresetButtons();
 
-            if (enabled != null && enabled.boolValue)
+            if (AuthoredBool(enabled))
             {
+                DrawVhsPresetButtons();
+                DrawLivePreview("Tape Preview", CrowImageEffects.PreviewStage.Vhs);
                 DrawPropertyField(SP("vhsIntensity"), "Tape Mix");
                 CrowFxEditorUI.Hint("Signal pass ordered before CRT. Luma and chroma are processed separately in YIQ so color delay, bandwidth loss, and RF damage behave like tape rather than a screen-space glitch overlay.");
 
@@ -5033,16 +6071,19 @@ namespace CrowFX.EditorTools
                         GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
                 }
 
-                EditorGUILayout.LabelField("Browse first. Inspect the recipe. Apply only when it is right.", CrowFxEditorUI.Styles.HintText);
-                GUILayout.Space(5f);
+                // The former "Browse first / Inspect / Apply" line was permanent instructional
+                // text for a workflow the buttons already state. Selecting is non-destructive and
+                // Apply confirms, so the reassurance now lives next to Apply where it is acted on.
+                GUILayout.Space(2f);
                 CrowFxEditorUI.SearchBar("Search looks", ref _fullPresetSearch, Pref_FullPresetSearch);
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    string[] categoryNames = new string[FullStackPresetCategories.Length + 1];
+                    string[] categoryNames = new string[FullStackPresetCategories.Length + 2];
                     for (int i = 0; i < FullStackPresetCategories.Length; i++)
                         categoryNames[i] = $"{FullStackPresetCategories[i].Title}  ·  {FullStackPresetCategories[i].Entries.Length} LOOKS";
                     categoryNames[AssetLookCategoryIndex] = $"MY ASSET LOOKS  ·  {customAssetCount} LOOKS";
+                    categoryNames[AllLooksCategoryIndex] = $"ALL LOOKS  ·  {FullStackPresetCount} LOOKS";
 
                     int nextCategory = CrowFxEditorUI.ThemedPopup("look-library-category", _fullPresetCategory, categoryNames, GUILayout.ExpandWidth(true));
                     if (nextCategory != _fullPresetCategory)
@@ -5053,11 +6094,14 @@ namespace CrowFX.EditorTools
                             SelectFullStackPreset(FullStackPresetCategories[nextCategory].Entries[0].Preset);
                     }
 
-                    if (_fullPresetCategory < FullStackPresetCategories.Length)
+                    // Always available: bookmarks span every category and custom asset looks,
+                    // so the toggle is never irrelevant to the current selection.
                     {
                         float savedHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
-                        float savedWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, "SAVED", 58f);
-                        bool nextFavoritesOnly = GUILayout.Toggle(_fullPresetFavoritesOnly, "SAVED", EditorStyles.miniButton,
+                        float savedWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, "BOOKMARKS", 84f);
+                        bool nextFavoritesOnly = GUILayout.Toggle(_fullPresetFavoritesOnly,
+                            new GUIContent("BOOKMARKS", "Show every bookmarked look, across all categories and custom asset looks."),
+                            EditorStyles.miniButton,
                             GUILayout.Width(savedWidth), GUILayout.Height(savedHeight));
                         if (nextFavoritesOnly != _fullPresetFavoritesOnly)
                         {
@@ -5068,9 +6112,16 @@ namespace CrowFX.EditorTools
                 }
 
                 bool globalSearch = !string.IsNullOrWhiteSpace(_fullPresetSearch);
-                bool browsingAssetLooks = !globalSearch && _fullPresetCategory == AssetLookCategoryIndex;
+
+                // With bookmarks on, the view is the shortlist itself rather than any one
+                // category, so it takes the grouped path and appends bookmarked asset looks.
+                bool bookmarksView = _fullPresetFavoritesOnly && !globalSearch;
+                bool browsingAssetLooks = !globalSearch && !bookmarksView && _fullPresetCategory == AssetLookCategoryIndex;
                 if (browsingAssetLooks)
                 {
+                    // This category lists nothing but asset looks, so any selection here is one.
+                    _assetLookSelectionActive = _selectedAssetLook != null;
+
                     GUILayout.Space(5f);
                     DrawAssetLookLibrary(includeAuthoringControls: true);
                     if (_selectedAssetLook != null)
@@ -5083,23 +6134,45 @@ namespace CrowFX.EditorTools
                 }
                 else
                 {
+                    bool browsingAllLooks = !globalSearch && (bookmarksView || _fullPresetCategory == AllLooksCategoryIndex);
+
                     if (globalSearch)
                         CrowFxEditorUI.WrappedLabel("Searching authored and custom asset looks.", CrowFxEditorUI.Styles.HeaderHint);
-                    else
+                    else if (bookmarksView)
+                        CrowFxEditorUI.WrappedLabel("Showing every bookmarked look.", CrowFxEditorUI.Styles.HeaderHint);
+                    else if (!browsingAllLooks)
                     {
                         var browsedCategory = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
                         CrowFxEditorUI.WrappedLabel(browsedCategory.Hint, CrowFxEditorUI.Styles.HeaderHint);
                     }
 
                     var matches = CollectVisibleFullStackPresets();
-                    showSelectedDetails = matches.Count > 0;
+
+                    // Resolved before anything draws, so rows and the detail card agree. An asset
+                    // selection only counts while this view actually lists that asset: one made in
+                    // Bookmarks or All Looks would otherwise stay selected after switching to a
+                    // category that does not contain it, leaving a card describing a look nothing
+                    // on screen points at, and no row highlighted at all.
+                    _assetLookSelectionActive =
+                        _selectedLookIsAsset &&
+                        _selectedAssetLook != null &&
+                        (browsingAllLooks || globalSearch) &&
+                        CollectVisibleAssetLooks().Contains(_selectedAssetLook);
+
                     GUILayout.Space(4f);
-                    DrawFullStackBrowserList(matches);
+
+                    if (browsingAllLooks)
+                        DrawGroupedFullStackBrowser();
+                    else
+                        DrawFullStackBrowserList(matches);
+
+                    // The grouped view lists asset looks inline, so it can select one directly.
+                    // Search draws its own asset section underneath.
                     if (globalSearch && CollectVisibleAssetLooks().Count > 0)
-                    {
                         DrawAssetLookLibrary(includeAuthoringControls: false);
-                        showSelectedAssetDetails = _selectedLookIsAsset && _selectedAssetLook != null;
-                    }
+
+                    showSelectedAssetDetails = _assetLookSelectionActive;
+                    showSelectedDetails = !_assetLookSelectionActive && matches.Count > 0;
                 }
             }
 
@@ -5122,9 +6195,14 @@ namespace CrowFX.EditorTools
             string query = _fullPresetSearch?.Trim() ?? "";
             bool globalSearch = query.Length > 0;
 
+            // The bookmarks filter is a view over everything you have bookmarked, not a filter
+            // within one category: a shortlist that hid entries because you happened to be
+            // looking at a different category would be worse than no shortlist.
+            bool browsingAllLooks = _fullPresetCategory == AllLooksCategoryIndex || _fullPresetFavoritesOnly;
+
             for (int categoryIndex = 0; categoryIndex < FullStackPresetCategories.Length; categoryIndex++)
             {
-                if (!globalSearch && categoryIndex != _fullPresetCategory) continue;
+                if (!globalSearch && !browsingAllLooks && categoryIndex != _fullPresetCategory) continue;
                 var category = FullStackPresetCategories[categoryIndex];
                 for (int entryIndex = 0; entryIndex < category.Entries.Length; entryIndex++)
                 {
@@ -5152,14 +6230,23 @@ namespace CrowFX.EditorTools
                 if (!string.IsNullOrWhiteSpace(_fullPresetSearch) && CollectVisibleAssetLooks().Count > 0)
                     return;
                 CrowFxEditorUI.Hint(_fullPresetFavoritesOnly
-                    ? "No saved looks match this filter. Select a look and use Save Look to build a personal shortlist."
+                    ? "No bookmarked looks match this filter. Select a look and use Bookmark to build a personal shortlist."
                     : $"No looks match \"{_fullPresetSearch}\".");
                 return;
             }
 
             int visibleCount = Mathf.Min(matches.Count, 12);
-            EditorGUILayout.LabelField($"{matches.Count} {(matches.Count == 1 ? "look" : "looks")}", CrowFxEditorUI.Styles.HeaderHint,
-                GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
+
+            // The category picker already reports its own count while browsing. During a search
+            // the results span categories, so that is the only case where a match count adds
+            // anything the header does not already say.
+            if (!string.IsNullOrWhiteSpace(_fullPresetSearch))
+            {
+                EditorGUILayout.LabelField($"{matches.Count} {(matches.Count == 1 ? "match" : "matches")}",
+                    CrowFxEditorUI.Styles.HeaderHint,
+                    GUILayout.Height(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.HeaderHint)));
+            }
+
             for (int i = 0; i < visibleCount; i++)
                 DrawFullStackBrowserRow(matches[i].category, matches[i].entry);
 
@@ -5167,39 +6254,165 @@ namespace CrowFX.EditorTools
                 CrowFxEditorUI.Hint($"Showing the first {visibleCount} matches. Refine the search to narrow the library.");
         }
 
-        private void DrawFullStackBrowserRow(FullStackPresetCategory category, FullStackPresetEntry entry)
+        /// <summary>Every authored category at once, each under a collapsible header. The picker
+        /// only ever showed one category, so comparing looks across categories meant switching
+        /// back and forth; this is the browse-everything view.</summary>
+        private void DrawGroupedFullStackBrowser()
         {
-            bool selected = entry.Preset == _selectedFullStackPreset;
-            bool favorite = _favoriteFullStackPresets.Contains(entry.Preset);
-            string pipeline = GetFullStackPresetPipeline(entry.Preset);
-            float buttonHeight = CrowFxEditorUI.CompactControlHeight(EditorStyles.miniButton);
-            float favoriteWidth = CrowFxEditorUI.ContentWidth(EditorStyles.miniButton, favorite ? "SAVED" : "SAVE", 54f);
-            float contentWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - favoriteWidth - 94f);
-            float nameHeight = CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f);
-            float detailHeight = Mathf.Max(CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.RowDetail, 18f),
-                CrowFxEditorUI.Styles.RowDetail.CalcHeight(new GUIContent(pipeline), contentWidth) + 2f);
-            float rowHeight = Mathf.Max(buttonHeight + 10f, nameHeight + detailHeight + 6f);
-            var rect = GUILayoutUtility.GetRect(0f, rowHeight, GUILayout.ExpandWidth(true));
-            var favoriteRect = new Rect(rect.xMax - favoriteWidth - 5f, rect.y + (rect.height - buttonHeight) * 0.5f, favoriteWidth, buttonHeight);
-            var selectRect = new Rect(rect.x, rect.y, rect.width - favoriteWidth - 10f, rect.height);
+            bool drewAnything = false;
+
+            for (int categoryIndex = 0; categoryIndex < FullStackPresetCategories.Length; categoryIndex++)
+            {
+                var category = FullStackPresetCategories[categoryIndex];
+
+                var entries = new List<FullStackPresetEntry>(category.Entries.Length);
+                for (int i = 0; i < category.Entries.Length; i++)
+                {
+                    var entry = category.Entries[i];
+                    if (_fullPresetFavoritesOnly && !_favoriteFullStackPresets.Contains(entry.Preset)) continue;
+                    entries.Add(entry);
+                }
+
+                // With the bookmarks filter on, a category with no bookmarks is dropped entirely
+                // rather than left as an empty header.
+                if (entries.Count == 0) continue;
+                drewAnything = true;
+
+                bool collapsed = _collapsedLookGroups.Contains(categoryIndex);
+                if (DrawLookGroupHeader(category, entries.Count, collapsed))
+                {
+                    if (!_collapsedLookGroups.Remove(categoryIndex))
+                        _collapsedLookGroups.Add(categoryIndex);
+                    SaveCollapsedLookGroups();
+                }
+
+                if (collapsed) continue;
+                for (int i = 0; i < entries.Count; i++)
+                    DrawFullStackBrowserRow(category, entries[i]);
+
+                GUILayout.Space(3f);
+            }
+
+            // Custom asset looks are bookmarkable too, so the shortlist has to include them or it
+            // would only ever be half a shortlist.
+            var assetMatches = CollectVisibleAssetLooks();
+            if (assetMatches.Count > 0)
+            {
+                drewAnything = true;
+                EditorGUILayout.LabelField("MY ASSET LOOKS", CrowFxEditorUI.Styles.SubHeaderLabel);
+                for (int i = 0; i < assetMatches.Count; i++)
+                    DrawAssetLookBrowserRow(assetMatches[i]);
+            }
+
+            if (!drewAnything)
+            {
+                CrowFxEditorUI.Hint(_fullPresetFavoritesOnly
+                    ? "No bookmarked looks yet. Use the star on any look to build a shortlist."
+                    : "No looks to show.");
+            }
+        }
+
+        private static GUIStyle _groupHeaderChevronStyle;
+
+        /// <summary>Collapsible category header. Returns true when clicked.</summary>
+        private static bool DrawLookGroupHeader(FullStackPresetCategory category, int count, bool collapsed)
+        {
+            float height = Mathf.Max(20f, CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f));
+            var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
 
             if (Event.current.type == EventType.Repaint)
             {
-                EditorGUI.DrawRect(rect, selected ? new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.34f) : new Color(1f, 1f, 1f, 0.025f));
-                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height), new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.9f));
-                CrowFxEditorUI.Theme.DrawBorder(rect);
+                EditorGUI.DrawRect(rect, new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.30f));
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height),
+                    new Color(category.Tint.r, category.Tint.g, category.Tint.b, 1f));
+            }
+
+            // Drawn with the default editor font rather than the package's custom one, which is
+            // how the section headers already render these glyphs.
+            _groupHeaderChevronStyle ??= new GUIStyle(EditorStyles.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(0, 0, 0, 0),
+                fontSize = 11,
+                clipping = TextClipping.Overflow,
+                normal = { textColor = new Color(1f, 1f, 1f, 0.75f) }
+            };
+
+            GUI.Label(new Rect(rect.x + 8f, rect.y, 14f, rect.height),
+                collapsed ? "▸" : "▾", _groupHeaderChevronStyle);
+            GUI.Label(new Rect(rect.x + 24f, rect.y, rect.width - 70f, rect.height),
+                category.Title, CrowFxEditorUI.Styles.SubHeaderLabel);
+
+            var countRect = new Rect(rect.xMax - 42f, rect.y, 36f, rect.height);
+            GUI.Label(countRect, count.ToString(), CrowFxEditorUI.Styles.HeaderHint);
+
+            return GUI.Button(rect, GUIContent.none, GUIStyle.none);
+        }
+
+        private static GUIStyle _rowStarStyle;
+
+        /// <summary>Compact bookmark toggle for a browser row. A text button here produced a
+        /// column of eight identical SAVE labels competing with the look names, so the state is
+        /// carried by a single glyph instead: lit when saved, dim when not.</summary>
+        private static bool DrawRowFavoriteStar(Rect rect, bool isFavorite)
+        {
+            _rowStarStyle ??= new GUIStyle(EditorStyles.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(0, 0, 0, 0),
+                fontSize = 12,
+                clipping = TextClipping.Overflow
+            };
+
+            var previous = GUI.contentColor;
+            GUI.contentColor = isFavorite ? new Color(1f, 0.85f, 0.2f, 1f) : new Color(1f, 1f, 1f, 0.22f);
+            bool clicked = GUI.Button(rect, new GUIContent(isFavorite ? "★" : "☆",
+                isFavorite ? "Remove this bookmark" : "Bookmark this look for quick access"), _rowStarStyle);
+            GUI.contentColor = previous;
+            return clicked;
+        }
+
+        private void DrawFullStackBrowserRow(FullStackPresetCategory category, FullStackPresetEntry entry)
+        {
+            // _selectedFullStackPreset is an enum and therefore always holds some value, so this
+            // has to defer to the asset-selection flag. Without it an authored row stays
+            // highlighted while a custom asset look is the real selection, and the list shows two.
+            bool selected = !_assetLookSelectionActive && entry.Preset == _selectedFullStackPreset;
+            bool favorite = _favoriteFullStackPresets.Contains(entry.Preset);
+
+            // Single line, name only. The recipe used to sit under each name, but looks inside a
+            // category share nearly all of their stages - five of the eight Print looks resolve to
+            // the same string - so it was the longest and least distinguishing text on screen. It
+            // now appears once, in the detail card, where it describes the look you actually chose.
+            float rowHeight = Mathf.Max(20f, CrowFxEditorUI.CompactControlHeight(CrowFxEditorUI.Styles.SubHeaderLabel, 20f));
+            var rect = GUILayoutUtility.GetRect(0f, rowHeight, GUILayout.ExpandWidth(true));
+
+            const float starWidth = 18f;
+            var starRect = new Rect(rect.xMax - starWidth - 4f, rect.y + (rect.height - 16f) * 0.5f, starWidth, 16f);
+            var selectRect = new Rect(rect.x, rect.y, rect.width - starWidth - 8f, rect.height);
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, selected
+                    ? new Color(category.Tint.r, category.Tint.g, category.Tint.b, 0.45f)
+                    : new Color(1f, 1f, 1f, 0.02f));
+
+                // The category rail widens and brightens on the selected row, so selection reads
+                // at a glance without the fill having to fight the panel background.
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, selected ? 4f : 2f, rect.height),
+                    new Color(category.Tint.r, category.Tint.g, category.Tint.b, selected ? 1f : 0.45f));
             }
 
             if (GUI.Button(selectRect, GUIContent.none, GUIStyle.none))
                 SelectFullStackPreset(entry.Preset);
 
-            var nameRect = new Rect(rect.x + 10f, rect.y + 3f, selectRect.width - 16f, nameHeight);
-            var detailRect = new Rect(rect.x + 10f, nameRect.yMax, selectRect.width - 16f, detailHeight);
+            var nameRect = new Rect(rect.x + 12f, rect.y, selectRect.width - 16f, rect.height);
+            var previousColor = GUI.contentColor;
+            GUI.contentColor = selected ? Color.white : new Color(1f, 1f, 1f, 0.72f);
             GUI.Label(nameRect, entry.Label, CrowFxEditorUI.Styles.SubHeaderLabel);
-            GUI.Label(detailRect, pipeline, CrowFxEditorUI.Styles.RowDetail);
+            GUI.contentColor = previousColor;
 
-            string favoriteLabel = favorite ? "SAVED" : "SAVE";
-            if (GUI.Button(favoriteRect, new GUIContent(favoriteLabel, favorite ? "Remove from saved looks" : "Save this look for quick access"), EditorStyles.miniButton))
+            if (DrawRowFavoriteStar(starRect, favorite))
                 ToggleFullStackPresetFavorite(entry.Preset);
         }
 
@@ -5213,16 +6426,35 @@ namespace CrowFX.EditorTools
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
+                    // While browsing a single category the picker above already names it. Only a
+                    // search returns results from several categories, so that is when the pill
+                    // tells you something the rest of the panel does not.
+                    if (!string.IsNullOrWhiteSpace(_fullPresetSearch))
+                        CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
+                    else
+                        EditorGUILayout.LabelField(entry.Label.ToUpperInvariant(), CrowFxEditorUI.Styles.SectionTitle);
+
+                    // "Save" is reserved for the two actions that write to disk: Save Current as
+                    // New Look, and Update Asset. This only adds the look to a personal shortlist,
+                    // so it says so instead of implying the settings are being persisted.
                     bool favorite = _favoriteFullStackPresets.Contains(_selectedFullStackPreset);
-                    float saveWidth = CrowFxEditorUI.ContentWidth(CrowFxEditorUI.Styles.PillButton, favorite ? "UNSAVE" : "SAVE LOOK", 88f);
-                    if (CrowFxEditorUI.MiniPill(favorite ? "UNSAVE" : "SAVE LOOK", GUILayout.Width(saveWidth)))
+                    string bookmarkLabel = favorite ? "BOOKMARKED" : "BOOKMARK";
+                    float saveWidth = CrowFxEditorUI.ContentWidth(CrowFxEditorUI.Styles.PillButton, bookmarkLabel, 104f);
+                    if (CrowFxEditorUI.MiniPill(bookmarkLabel, GUILayout.Width(saveWidth)))
                         ToggleFullStackPresetFavorite(_selectedFullStackPreset);
                 }
 
-                GUILayout.Space(4f);
-                EditorGUILayout.LabelField(entry.Label, CrowFxEditorUI.Styles.SectionTitle);
-                CrowFxEditorUI.Hint(GetFullStackPresetDescription(_selectedFullStackPreset));
+                // When the pill took the header row, the name still needs its own line.
+                if (!string.IsNullOrWhiteSpace(_fullPresetSearch))
+                {
+                    GUILayout.Space(4f);
+                    EditorGUILayout.LabelField(entry.Label.ToUpperInvariant(), CrowFxEditorUI.Styles.SectionTitle);
+                }
+
+                // A look's description is the content of this card, not commentary about it, so it
+                // stays visible when explanatory hints are switched off.
+                CrowFxEditorUI.WrappedLabel(GetFullStackPresetDescription(_selectedFullStackPreset),
+                    CrowFxEditorUI.Styles.HintText);
                 EditorGUILayout.LabelField($"RECIPE  {GetFullStackPresetPipeline(_selectedFullStackPreset)}", CrowFxEditorUI.Styles.SummaryText);
 
                 EditorGUI.BeginChangeCheck();
@@ -5235,23 +6467,34 @@ namespace CrowFX.EditorTools
                         PreviewFullStackPreset(_selectedFullStackPreset, entry.Label);
                 }
 
-                if (_fullPresetPreviewActive)
-                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {_previewedFullStackPreset}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
-                else
-                    EditorGUILayout.LabelField("SELECTING IS SAFE  •  APPLY REQUIRES CONFIRMATION  •  UNDO SUPPORTED", CrowFxEditorUI.Styles.HeaderHint);
-
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
-                    if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                    // Preview needs one component to snapshot and restore; Apply is happy to write
+                    // the look into all of them.
+                    using (new EnabledScope(GUI.enabled && !IsMultiEditing))
                     {
-                        if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
-                        else PreviewFullStackPreset(_selectedFullStackPreset, entry.Label);
+                        string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
+                        if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                        {
+                            if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
+                            else PreviewFullStackPreset(_selectedFullStackPreset, entry.Label);
+                        }
                     }
 
-                    if (CrowFxEditorUI.PillButton($"APPLY {entry.Label.ToUpperInvariant()}", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
+                    // The look's name is directly above and the confirmation dialog names it
+                    // again, so spelling it into the button only made the control wider.
+                    if (CrowFxEditorUI.PillButton("APPLY", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
                         ConfirmAndApplyFullStackPreset(_selectedFullStackPreset, entry.Label);
                 }
+
+                if (IsMultiEditing)
+                    HintMultiEditUnavailable("Look preview");
+
+                // Below the buttons, never above. Starting a preview inserts this line, and
+                // anything inserted above the row would push Stop Preview out from under the
+                // cursor that just pressed Preview.
+                if (_fullPresetPreviewActive)
+                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {_previewedFullStackPreset}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
 
                 DrawUpdateSelectedAssetButton(FindGeneratedLookAsset(_selectedFullStackPreset));
             }
@@ -5262,22 +6505,32 @@ namespace CrowFX.EditorTools
             var preset = _selectedAssetLook;
             if (preset == null) return;
             string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
-            Color tint = new Color(0.38f, 0.72f, 0.82f, 0.24f);
 
             using (CrowFxEditorUI.PanelScope())
             {
+                // The "MY ASSET LOOKS" pill repeated the category picker and the "SAVED" pill
+                // restated that a project asset is saved, which is not information.
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    CrowFxEditorUI.TagPill("MY ASSET LOOKS", tint, GUILayout.ExpandWidth(true));
-                    CrowFxEditorUI.TagPill("SAVED", null, GUILayout.Width(88f));
-                }
+                    EditorGUILayout.LabelField(label.ToUpperInvariant(), CrowFxEditorUI.Styles.SectionTitle);
 
-                GUILayout.Space(4f);
-                EditorGUILayout.LabelField(label, CrowFxEditorUI.Styles.SectionTitle);
-                CrowFxEditorUI.Hint(string.IsNullOrWhiteSpace(preset.description)
+                    bool bookmarked = IsAssetLookFavorite(preset);
+                    string bookmarkLabel = bookmarked ? "BOOKMARKED" : "BOOKMARK";
+                    float bookmarkWidth = CrowFxEditorUI.ContentWidth(CrowFxEditorUI.Styles.PillButton, bookmarkLabel, 104f);
+                    if (CrowFxEditorUI.MiniPill(bookmarkLabel, GUILayout.Width(bookmarkWidth)))
+                        ToggleAssetLookFavorite(preset);
+
+                    if (CrowFxEditorUI.MiniPill("SELECT ASSET", GUILayout.Width(96f)))
+                        EditorGUIUtility.PingObject(preset);
+                }
+                CrowFxEditorUI.WrappedLabel(string.IsNullOrWhiteSpace(preset.description)
                     ? "Complete-stack custom asset look."
-                    : preset.description);
-                EditorGUILayout.LabelField($"RECIPE  {preset.usage}  ·  {preset.gpuTier}  ·  COMPLETE STACK", CrowFxEditorUI.Styles.SummaryText);
+                    : preset.description, CrowFxEditorUI.Styles.HintText);
+                // Derived from the asset's own profile rather than its metadata, so the recipe
+                // describes what the look actually does instead of how it was categorised.
+                string assetRecipe = preset.profile != null ? preset.profile.GetActiveStageSummary() : "NO PROFILE";
+                EditorGUILayout.LabelField($"RECIPE  {assetRecipe}", CrowFxEditorUI.Styles.SummaryText);
+                EditorGUILayout.LabelField($"{preset.usage}  ·  {preset.gpuTier}", CrowFxEditorUI.Styles.HeaderHint);
 
                 EditorGUI.BeginChangeCheck();
                 float nextAmount = EditorGUILayout.Slider(new GUIContent("Amount", "Sets the final whole-look blend while preserving the saved internal relationships."), _fullPresetAmount, 0.25f, 1f);
@@ -5288,34 +6541,97 @@ namespace CrowFX.EditorTools
                     if (_fullPresetPreviewActive) PreviewAssetLook(preset);
                 }
 
-                if (_fullPresetPreviewActive)
-                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {GetAssetLookLabel(_previewedAssetLook)}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
-                else
-                    EditorGUILayout.LabelField("SELECTING IS SAFE  •  APPLY REQUIRES CONFIRMATION  •  UNDO SUPPORTED", CrowFxEditorUI.Styles.HeaderHint);
-
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
-                    if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                    using (new EnabledScope(GUI.enabled && !IsMultiEditing))
                     {
-                        if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
-                        else PreviewAssetLook(preset);
+                        string previewLabel = _fullPresetPreviewActive ? "STOP PREVIEW" : "PREVIEW";
+                        if (CrowFxEditorUI.PillButton(previewLabel, 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                        {
+                            if (_fullPresetPreviewActive) RestoreFullStackPresetPreviewIfNeeded();
+                            else PreviewAssetLook(preset);
+                        }
                     }
 
-                    if (CrowFxEditorUI.PillButton($"APPLY {label.ToUpperInvariant()}", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
+                    if (CrowFxEditorUI.PillButton("APPLY", 26f, CrowFxEditorUI.Styles.ResetButton, GUILayout.ExpandWidth(true)))
                         ConfirmAndApplyAssetLook(preset);
                 }
 
+                if (IsMultiEditing)
+                    HintMultiEditUnavailable("Look preview");
+
+                // Below the buttons, never above, so starting a preview does not push Stop
+                // Preview out from under the cursor that just pressed Preview.
+                if (_fullPresetPreviewActive)
+                    CrowFxEditorUI.Hint($"LIVE PREVIEW  {GetAssetLookLabel(_previewedAssetLook)}. Select another look to compare, Apply to commit, or Stop Preview to restore the original stack.", CrowFxEditorUI.HintType.Warning);
+
                 DrawUpdateSelectedAssetButton(preset);
+
+                using (new EditorGUI.DisabledScope(_fullPresetPreviewActive))
+                {
+                    if (CrowFxEditorUI.PillButton("DELETE LOOK", 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
+                        ConfirmAndDeleteAssetLook(preset);
+                }
             }
+        }
+
+        /// <summary>Deletes a custom look's asset from the project after confirmation. Only offered
+        /// for custom looks: the authored library ships with the package, and deleting one of those
+        /// would leave its Look Library row pointing at nothing.</summary>
+        private void ConfirmAndDeleteAssetLook(CrowFXPresetAsset preset)
+        {
+            if (preset == null) return;
+
+            string label = string.IsNullOrWhiteSpace(preset.displayName) ? preset.name : preset.displayName;
+            string path = AssetDatabase.GetAssetPath(preset);
+            if (string.IsNullOrEmpty(path))
+            {
+                Debug.LogWarning($"CrowFX: \"{label}\" has no asset path and cannot be deleted.");
+                return;
+            }
+
+            if (!EditorUtility.DisplayDialog("Delete Look",
+                    $"Delete \"{label}\" from the project?\n\n{path}\n\n" +
+                    "This removes the asset file. It cannot be undone from the inspector, though the " +
+                    "file can be recovered from version control or the OS recycle bin.",
+                    "Delete", "Cancel"))
+                return;
+
+            // Drop any preview and the bookmark before the asset goes away, or the library keeps
+            // a reference to a destroyed object and the shortlist keeps a dead GUID.
+            if (_fullPresetPreviewActive && _previewedAssetLook == preset)
+                RestoreFullStackPresetPreviewIfNeeded();
+
+            string key = GetAssetLookKey(preset);
+            if (key != null && _favoriteAssetLooks.Remove(key))
+                EditorPrefs.SetString(Pref_AssetLookFavorites, string.Join(",", _favoriteAssetLooks));
+
+            if (_selectedAssetLook == preset)
+            {
+                _selectedAssetLook = null;
+                _selectedLookIsAsset = false;
+            }
+
+            if (!AssetDatabase.MoveAssetToTrash(path))
+            {
+                Debug.LogError($"CrowFX: could not delete \"{label}\" at {path}.");
+                return;
+            }
+
+            DataDrivenPresets.Clear();
+            _presetRecipeCache.Clear();
+            _nextPresetAssetRefresh = 0.0;
+            GUIUtility.ExitGUI();
         }
 
         private void DrawUpdateSelectedAssetButton(CrowFXPresetAsset preset)
         {
             string tooltip = _fullPresetPreviewActive
                 ? "Stop or apply the live preview before updating its repository asset."
-                : "Overwrite this selected look's embedded profile with the current CrowFX controls. Metadata and asset GUID are preserved.";
-            using (new EditorGUI.DisabledScope(preset == null || _fullPresetPreviewActive))
+                : IsMultiEditing
+                    ? "Capturing controls into an asset needs one component. Select a single CrowFX component to update this look."
+                    : "Overwrite this selected look's embedded profile with the current CrowFX controls. Metadata and asset GUID are preserved.";
+            using (new EditorGUI.DisabledScope(preset == null || _fullPresetPreviewActive || IsMultiEditing))
             {
                 if (CrowFxEditorUI.PillButton("UPDATE ASSET FROM CURRENT CONTROLS", 26f, CrowFxEditorUI.Styles.PillButton, GUILayout.ExpandWidth(true)))
                     UpdatePresetFromCurrentControls(preset);
@@ -5337,6 +6653,10 @@ namespace CrowFX.EditorTools
         {
             var targetFx = (CrowImageEffects)target;
             if (targetFx == null || preset == null || !preset.CanApply(out _)) return;
+
+            // Guarded here as well as at the button, because the Amount slider re-previews on
+            // change and would otherwise start a preview the disabled button never offered.
+            if (IsMultiEditing) return;
             RestoreSectionPreviewStatesIfNeeded();
 
             if (!_fullPresetPreviewActive)
@@ -5381,20 +6701,38 @@ namespace CrowFX.EditorTools
 
         private void ApplyAssetLook(CrowFXPresetAsset preset, bool previewOnly)
         {
-            var effect = (CrowImageEffects)target;
-            if (effect == null || preset == null) return;
-            if (!previewOnly)
+            if (targets == null || preset == null) return;
+
+            // Preview only ever runs single-selection (its snapshot restore cannot span a mixed
+            // set), so previewing touches the primary target and applying touches all of them.
+            if (previewOnly)
             {
-                RestorePreviewStatesIfNeeded();
-                Undo.RecordObject(effect, $"Apply {GetAssetLookLabel(preset)} Asset Look");
+                var primary = target as CrowImageEffects;
+                if (primary == null) return;
+
+                preset.ApplyTo(primary);
+                primary.masterBlend *= _fullPresetAmount;
+                EditorUtility.SetDirty(primary);
+                serializedObject.Update();
+                SceneView.RepaintAll();
+                return;
             }
 
-            preset.ApplyTo(effect);
-            effect.masterBlend *= _fullPresetAmount;
-            EditorUtility.SetDirty(effect);
+            RestorePreviewStatesIfNeeded();
+            RecordTargetsUndo($"Apply {GetAssetLookLabel(preset)} Asset Look");
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var fx = targets[i] as CrowImageEffects;
+                if (fx == null) continue;
+
+                preset.ApplyTo(fx);
+                fx.masterBlend *= _fullPresetAmount;
+                EditorUtility.SetDirty(fx);
+            }
+
             serializedObject.Update();
-            if (previewOnly) SceneView.RepaintAll();
-            else FinalizeCommittedTargetChange(effect);
+            FinalizeCommittedTargetChanges();
         }
 
         private static string GetAssetLookLabel(CrowFXPresetAsset preset)
@@ -5423,6 +6761,9 @@ namespace CrowFX.EditorTools
         {
             var targetFx = (CrowImageEffects)target;
             if (targetFx == null) return;
+
+            // See PreviewAssetLook: the Amount slider re-previews on change.
+            if (IsMultiEditing) return;
 
             RestoreSectionPreviewStatesIfNeeded();
 
@@ -5495,118 +6836,6 @@ namespace CrowFX.EditorTools
                 for (int i = 0; i < category.Entries.Length; i++)
                     if (category.Entries[i].Preset == preset) return category.Entries[i];
             return default;
-        }
-
-        private void DrawFullStackPresetButtonsLegacy()
-        {
-            using (CrowFxEditorUI.PanelScope())
-            {
-                EditorGUILayout.LabelField("FULL STACK PRESETS", CrowFxEditorUI.Styles.SubHeaderLabel);
-                EditorGUILayout.LabelField("Whole-stack looks · confirmation required · Undo supported", CrowFxEditorUI.Styles.HeaderHint);
-                GUILayout.Space(3);
-                CrowFxEditorUI.SearchBar("Find", ref _fullPresetSearch, Pref_FullPresetSearch);
-                GUILayout.Space(3);
-                DrawFullStackCategoryRail();
-            }
-
-            GUILayout.Space(4);
-            using (CrowFxEditorUI.PanelScope())
-            {
-                if (string.IsNullOrWhiteSpace(_fullPresetSearch))
-                {
-                    var category = FullStackPresetCategories[Mathf.Clamp(_fullPresetCategory, 0, FullStackPresetCategories.Length - 1)];
-                    CrowFxEditorUI.TagPill(category.Title, category.Tint, GUILayout.ExpandWidth(true));
-                    EditorGUILayout.LabelField(category.Hint, CrowFxEditorUI.Styles.HeaderHint);
-                    GUILayout.Space(2);
-                    DrawFullStackPresetGrid(category.Entries, category);
-                }
-                else
-                {
-                    DrawFullStackSearchResults(_fullPresetSearch.Trim());
-                }
-            }
-            GUILayout.Space(6);
-        }
-
-        private void DrawFullStackCategoryRail()
-        {
-            for (int row = 0; row < 2; row++)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    for (int column = 0; column < 5; column++)
-                    {
-                        int index = row * 5 + column;
-                        var category = FullStackPresetCategories[index];
-                        string tooltip = $"{category.Title}\n{category.Hint}";
-                        if (CrowFxEditorUI.SelectionPill(category.ShortLabel, index == _fullPresetCategory,
-                            tooltip, GUILayout.ExpandWidth(true)))
-                        {
-                            _fullPresetCategory = index;
-                            _fullPresetSearch = "";
-                            EditorPrefs.SetInt(Pref_FullPresetCategory, index);
-                            EditorPrefs.SetString(Pref_FullPresetSearch, "");
-                            GUI.FocusControl(null);
-                        }
-                    }
-                }
-            }
-        }
-
-        private void DrawFullStackPresetGrid(IReadOnlyList<FullStackPresetEntry> entries, FullStackPresetCategory category)
-        {
-            for (int i = 0; i < entries.Count; i += 2)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    DrawFullStackPresetChoice(entries[i], category);
-                    if (i + 1 < entries.Count)
-                        DrawFullStackPresetChoice(entries[i + 1], category);
-                }
-            }
-        }
-
-        private void DrawFullStackPresetChoice(FullStackPresetEntry entry, FullStackPresetCategory category)
-        {
-            string tooltip = $"{category.Title}\n{category.Hint}\n\nReplaces the complete effect stack after confirmation.";
-            if (CrowFxEditorUI.SelectionPill(entry.Label, false, tooltip, GUILayout.ExpandWidth(true)))
-                ConfirmAndApplyFullStackPreset(entry.Preset, entry.Label);
-        }
-
-        private void DrawFullStackSearchResults(string query)
-        {
-            var matches = new List<(FullStackPresetCategory category, FullStackPresetEntry entry)>();
-            for (int categoryIndex = 0; categoryIndex < FullStackPresetCategories.Length; categoryIndex++)
-            {
-                var category = FullStackPresetCategories[categoryIndex];
-                for (int entryIndex = 0; entryIndex < category.Entries.Length; entryIndex++)
-                {
-                    var entry = category.Entries[entryIndex];
-                    if (entry.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        category.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        category.Hint.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        matches.Add((category, entry));
-                    }
-                }
-            }
-
-            CrowFxEditorUI.TagPill("SEARCH RESULTS", new Color(0.42f, 0.62f, 0.86f, 0.22f), GUILayout.ExpandWidth(true));
-            if (matches.Count == 0)
-            {
-                CrowFxEditorUI.Hint($"No full-stack presets match \"{query}\".");
-                return;
-            }
-
-            for (int i = 0; i < matches.Count; i += 2)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    DrawFullStackPresetChoice(matches[i].entry, matches[i].category);
-                    if (i + 1 < matches.Count)
-                        DrawFullStackPresetChoice(matches[i + 1].entry, matches[i + 1].category);
-                }
-            }
         }
 
         private void DrawJitterPresetButtons()
@@ -6204,7 +7433,7 @@ namespace CrowFX.EditorTools
             else
             {
                 RestorePreviewStatesIfNeeded();
-                Undo.RecordObject(targetFx, $"Apply {displayName} Preset");
+                RecordTargetsUndo($"Apply {displayName} Preset");
             }
 
             var tmpGO = new GameObject("CrowImageEffects_FullPresetDefaults__TEMP") { hideFlags = HideFlags.HideAndDontSave };
@@ -6672,7 +7901,7 @@ namespace CrowFX.EditorTools
                 }
                 else
                 {
-                    FinalizeCommittedTargetChange(targetFx);
+                    FinalizeCommittedTargetChanges();
                 }
             }
             finally
@@ -6686,23 +7915,36 @@ namespace CrowFX.EditorTools
             var asset = FindGeneratedLookAsset(preset);
             if (asset == null || !asset.CanApply(out _)) return false;
 
+            // Preview is single-selection only, so it stays on the primary target; applying spans
+            // the whole selection. asset.ApplyTo writes the component directly rather than through
+            // serializedObject, so each one has to be visited by hand.
             if (previewOnly)
-                RestoreSectionPreviewStatesIfNeeded();
-            else
             {
-                RestorePreviewStatesIfNeeded();
-                Undo.RecordObject(targetFx, $"Apply {displayName} Asset Look");
+                RestoreSectionPreviewStatesIfNeeded();
+
+                asset.ApplyTo(targetFx);
+                targetFx.masterBlend *= _fullPresetAmount;
+                EditorUtility.SetDirty(targetFx);
+                serializedObject.Update();
+                SceneView.RepaintAll();
+                return true;
             }
 
-            asset.ApplyTo(targetFx);
-            targetFx.masterBlend *= _fullPresetAmount;
-            EditorUtility.SetDirty(targetFx);
-            serializedObject.Update();
+            RestorePreviewStatesIfNeeded();
+            RecordTargetsUndo($"Apply {displayName} Asset Look");
 
-            if (previewOnly)
-                SceneView.RepaintAll();
-            else
-                FinalizeCommittedTargetChange(targetFx);
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var fx = targets[i] as CrowImageEffects;
+                if (fx == null) continue;
+
+                asset.ApplyTo(fx);
+                fx.masterBlend *= _fullPresetAmount;
+                EditorUtility.SetDirty(fx);
+            }
+
+            serializedObject.Update();
+            FinalizeCommittedTargetChanges();
             return true;
         }
 
@@ -7467,6 +8709,64 @@ namespace CrowFX.EditorTools
             EditorPrefs.SetString(Pref_FullPresetFavorites, string.Join(",", values));
         }
 
+        /// <summary>Stable identity for an asset look's bookmark. GUID rather than name or path so
+        /// renaming or moving the asset keeps the bookmark attached to it.</summary>
+        private static string GetAssetLookKey(CrowFXPresetAsset preset)
+        {
+            if (preset == null) return null;
+            string path = AssetDatabase.GetAssetPath(preset);
+            if (string.IsNullOrEmpty(path)) return null;
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            return string.IsNullOrEmpty(guid) ? null : guid;
+        }
+
+        private bool IsAssetLookFavorite(CrowFXPresetAsset preset)
+        {
+            string key = GetAssetLookKey(preset);
+            return key != null && _favoriteAssetLooks.Contains(key);
+        }
+
+        private void ToggleAssetLookFavorite(CrowFXPresetAsset preset)
+        {
+            string key = GetAssetLookKey(preset);
+            if (key == null) return;
+
+            if (!_favoriteAssetLooks.Add(key))
+                _favoriteAssetLooks.Remove(key);
+
+            EditorPrefs.SetString(Pref_AssetLookFavorites, string.Join(",", _favoriteAssetLooks));
+        }
+
+        private void LoadAssetLookFavorites()
+        {
+            _favoriteAssetLooks.Clear();
+            string raw = EditorPrefs.GetString(Pref_AssetLookFavorites, "");
+            if (string.IsNullOrEmpty(raw)) return;
+
+            foreach (string value in raw.Split(','))
+                if (!string.IsNullOrEmpty(value)) _favoriteAssetLooks.Add(value);
+        }
+
+        private void LoadCollapsedLookGroups()
+        {
+            _collapsedLookGroups.Clear();
+            string raw = EditorPrefs.GetString(Pref_FullPresetCollapsedGroups, "");
+            if (string.IsNullOrEmpty(raw)) return;
+
+            foreach (string value in raw.Split(','))
+                if (int.TryParse(value, out int index) && index >= 0 && index < FullStackPresetCategories.Length)
+                    _collapsedLookGroups.Add(index);
+        }
+
+        private void SaveCollapsedLookGroups()
+        {
+            var values = new List<string>(_collapsedLookGroups.Count);
+            foreach (int index in _collapsedLookGroups)
+                values.Add(index.ToString());
+            values.Sort(StringComparer.Ordinal);
+            EditorPrefs.SetString(Pref_FullPresetCollapsedGroups, string.Join(",", values));
+        }
+
         private void ToggleFullStackPresetFavorite(FullStackPreset preset)
         {
             if (!_favoriteFullStackPresets.Add(preset))
@@ -7570,7 +8870,25 @@ namespace CrowFX.EditorTools
             };
         }
 
+        /// <summary>Render-order recipe for a look, derived from the preset asset that will
+        /// actually be applied. The hand-written table below is only the fallback for looks whose
+        /// asset is missing, which is the same condition under which ApplyFullStackPreset falls
+        /// back to its hardcoded settings - so the recipe always describes the data in use.</summary>
         private static string GetFullStackPresetPipeline(FullStackPreset preset)
+        {
+            if (_presetRecipeCache.TryGetValue(preset, out string cached))
+                return cached;
+
+            var asset = FindGeneratedLookAsset(preset);
+            string recipe = asset != null && asset.profile != null
+                ? asset.profile.GetActiveStageSummary()
+                : GetAuthoredPresetPipelineFallback(preset);
+
+            _presetRecipeCache[preset] = recipe;
+            return recipe;
+        }
+
+        private static string GetAuthoredPresetPipelineFallback(FullStackPreset preset)
         {
             switch (preset)
             {

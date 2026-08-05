@@ -53,12 +53,14 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
 
             float _JitterEnabled;
@@ -260,10 +262,11 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 }
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
-                float3 baseRGB = tex2D(_MainTex, uv).rgb;
+                float3 baseRGB = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
 
                 if (_JitterEnabled <= 0.5 || _JitterStrength <= 1e-5)
                     return float4(baseRGB, 1);
@@ -304,9 +307,9 @@ Shader "Hidden/CrowFX/Stages/ChannelJitter"
                 float2 sB = oB * ((dot(_DirB.xy, _DirB.xy) > 1e-6) ? normalize(_DirB.xy) : 0.0);
 
                 float3 jitterRGB = float3(
-                    tex2D(_MainTex, safeUV(uv + sR)).r,
-                    tex2D(_MainTex, safeUV(uv + sG)).g,
-                    tex2D(_MainTex, safeUV(uv + sB)).b
+                    CROWFX_SAMPLE_SCREEN(_MainTex, safeUV(uv + sR)).r,
+                    CROWFX_SAMPLE_SCREEN(_MainTex, safeUV(uv + sG)).g,
+                    CROWFX_SAMPLE_SCREEN(_MainTex, safeUV(uv + sB)).b
                 );
 
                 float3 w = saturate(_ChannelWeights.rgb);

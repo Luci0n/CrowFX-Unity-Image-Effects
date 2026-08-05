@@ -60,12 +60,14 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
 
             float _BleedBlend, _BleedIntensity;
@@ -126,10 +128,10 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 uvU = saturate(uvU);
                 uvD = saturate(uvD);
 
-                float lR = Luma(tex2D(_MainTex, uvR).rgb);
-                float lL = Luma(tex2D(_MainTex, uvL).rgb);
-                float lU = Luma(tex2D(_MainTex, uvU).rgb);
-                float lD = Luma(tex2D(_MainTex, uvD).rgb);
+                float lR = Luma(CROWFX_SAMPLE_SCREEN(_MainTex, uvR).rgb);
+                float lL = Luma(CROWFX_SAMPLE_SCREEN(_MainTex, uvL).rgb);
+                float lU = Luma(CROWFX_SAMPLE_SCREEN(_MainTex, uvU).rgb);
+                float lD = Luma(CROWFX_SAMPLE_SCREEN(_MainTex, uvD).rgb);
 
                 float gx = (lR - lL);
                 float gy = (lU - lD);
@@ -178,7 +180,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 {
                     float2 uv1 = uv + dirUV;
                     uv1 = CrowFX_SafeUV(uv1, clampUV);
-                    return tex2D(_MainTex, uv1).rgb;
+                    return CROWFX_SAMPLE_SCREEN(_MainTex, uv1).rgb;
                 }
 
                 int n = (int)clamp(samples, 1.0, 8.0);
@@ -197,7 +199,7 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                     float2 uvK = uv + dirUV * (t * smearLen);
                     uvK = CrowFX_SafeUV(uvK, clampUV);
 
-                    acc += tex2D(_MainTex, uvK).rgb * w;
+                    acc += CROWFX_SAMPLE_SCREEN(_MainTex, uvK).rgb * w;
                     wsum += w;
                 }
 
@@ -238,11 +240,12 @@ Shader "Hidden/CrowFX/Stages/RGBBleeding"
                 }
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
 
-                float3 baseRGB = tex2D(_MainTex, uv).rgb;
+                float3 baseRGB = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
 
                 float blend = saturate(_BleedBlend);
                 float inten = max(0.0, _BleedIntensity);

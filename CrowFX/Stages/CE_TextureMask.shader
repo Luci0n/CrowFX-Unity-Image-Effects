@@ -21,12 +21,14 @@ Shader "Hidden/CrowFX/Stages/TextureMask"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
 
-            sampler2D _MainTex;
-            sampler2D _MaskedTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
+            CROWFX_DECLARE_SCREEN_TEX(_MaskedTex)
 
             float _UseMask;
             sampler2D _MaskTex;
@@ -34,12 +36,13 @@ Shader "Hidden/CrowFX/Stages/TextureMask"
             float _MaskSoftness, _MaskOpacity, _MaskInvert, _MaskChannel;
             float4 _MaskTransform;
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
 
-                float3 baseCol = tex2D(_MainTex, uv).rgb;
-                float3 fxCol   = tex2D(_MaskedTex, uv).rgb;
+                float3 baseCol = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
+                float3 fxCol   = CROWFX_SAMPLE_SCREEN(_MaskedTex, uv).rgb;
 
                 if (_UseMask < 0.5)
                     return float4(fxCol, 1); // no masking -> just pass processed

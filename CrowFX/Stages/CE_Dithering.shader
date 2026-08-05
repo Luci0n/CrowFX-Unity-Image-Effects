@@ -38,12 +38,14 @@ Shader "Hidden/CrowFX/Stages/Dithering"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
 
             float _Levels, _LevelsR, _LevelsG, _LevelsB, _UsePerChannel, _LuminanceOnly;
@@ -276,10 +278,11 @@ Shader "Hidden/CrowFX/Stages/Dithering"
                 return q / (levels - 1.0);
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
-                float3 col = tex2D(_MainTex, uv).rgb;
+                float3 col = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
 
                 float levelsAnim = _Levels;
                 if (_AnimateLevels > 0.5)

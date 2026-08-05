@@ -25,13 +25,15 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
-            sampler2D _PrevTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
+            CROWFX_DECLARE_SCREEN_TEX(_PrevTex)
             float4 _MainTex_TexelSize;
 
             float _GhostEnabled, _GhostBlend;
@@ -47,12 +49,13 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
                 return CrowFX_GetStepUV(_UseVirtualGrid, _VirtualRes, _MainTex_TexelSize);
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
 
                 // Always sample current.
-                float3 cur = tex2D(_MainTex, uv).rgb;
+                float3 cur = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
 
                 // EARLY OUT: if ghost is off, we do exactly 1 sample total.
                 // Using <= 0.5 / <= 0 keeps it stable, and avoids extra work.
@@ -72,7 +75,7 @@ Shader "Hidden/CrowFX/Stages/Ghosting"
                     uvPrev = uv + offPx * stepUV;
                 }
 
-                float3 prev = tex2D(_PrevTex, uvPrev).rgb;
+                float3 prev = CROWFX_SAMPLE_SCREEN(_PrevTex, uvPrev).rgb;
 
                 // Combine mode selection.
                 float m = _CombineMode;

@@ -8,11 +8,13 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
             float _Curvature, _Overscan;
             float _ScanlineStrength, _ScanlineCount, _BeamWidth;
@@ -22,6 +24,35 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
             float _Noise, _Flicker, _Brightness;
             float _TubeEdge, _BloomThreshold, _ConvergencePx, _Focus;
             float _BlackLevel, _HumBar, _FlickerHz;
+            float _DisplaySignalDomain;
+
+            // Resolution of the render target actually being processed. _ScreenParams
+            // describes the backbuffer, which diverges from the target under render
+            // scale, dynamic resolution, split screen, and off-screen cameras.
+            #define CROWFX_TARGET_RES (_MainTex_TexelSize.zw)
+
+            // Scanline weighting, phosphor masks, vignette and hum all scale encoded
+            // drive values rather than radiometric intensity.  Applying them to linear
+            // color makes every one of them substantially weaker than authored in a
+            // Linear-space project, so the tube runs on signal like the tape and
+            // composite stages do.
+            float3 ToSignal(float3 c)
+            {
+                #if defined(UNITY_COLORSPACE_GAMMA)
+                    return max(c, 0.0);
+                #else
+                    return (_DisplaySignalDomain > 0.5) ? LinearToGammaSpace(max(c, 0.0)) : max(c, 0.0);
+                #endif
+            }
+
+            float3 FromSignal(float3 c)
+            {
+                #if defined(UNITY_COLORSPACE_GAMMA)
+                    return c;
+                #else
+                    return (_DisplaySignalDomain > 0.5) ? GammaToLinearSpace(max(c, 0.0)) : max(c, 0.0);
+                #endif
+            }
 
             float Hash21(float2 p)
             {
@@ -46,12 +77,17 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
                 return p * 0.5 + 0.5;
             }
 
+            float3 SampleSignal(float2 uv)
+            {
+                return ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb);
+            }
+
             float3 SampleSoft(float2 uv)
             {
                 float2 dx = float2(_MainTex_TexelSize.x, 0.0);
-                float3 center = tex2D(_MainTex, uv).rgb;
+                float3 center = SampleSignal(uv);
                 float3 soft = center * 0.50 +
-                              (tex2D(_MainTex, uv - dx).rgb + tex2D(_MainTex, uv + dx).rgb) * 0.25;
+                              (SampleSignal(uv - dx) + SampleSignal(uv + dx)) * 0.25;
                 return lerp(center, soft, saturate(_Focus));
             }
 
@@ -107,37 +143,38 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
             {
                 float2 r = _MainTex_TexelSize.xy * _BloomRadius;
                 float3 nearGlow = 0.0;
-                nearGlow += tex2D(_MainTex, uv + float2( r.x, 0.0)).rgb;
-                nearGlow += tex2D(_MainTex, uv + float2(-r.x, 0.0)).rgb;
-                nearGlow += tex2D(_MainTex, uv + float2(0.0,  r.y)).rgb;
-                nearGlow += tex2D(_MainTex, uv + float2(0.0, -r.y)).rgb;
+                nearGlow += SampleSignal(uv + float2( r.x, 0.0));
+                nearGlow += SampleSignal(uv + float2(-r.x, 0.0));
+                nearGlow += SampleSignal(uv + float2(0.0,  r.y));
+                nearGlow += SampleSignal(uv + float2(0.0, -r.y));
                 float3 farGlow = 0.0;
-                farGlow += tex2D(_MainTex, uv + r * 2.5).rgb;
-                farGlow += tex2D(_MainTex, uv - r * 2.5).rgb;
-                farGlow += tex2D(_MainTex, uv + float2(r.x, -r.y) * 2.5).rgb;
-                farGlow += tex2D(_MainTex, uv + float2(-r.x, r.y) * 2.5).rgb;
+                farGlow += SampleSignal(uv + r * 2.5);
+                farGlow += SampleSignal(uv - r * 2.5);
+                farGlow += SampleSignal(uv + float2(r.x, -r.y) * 2.5);
+                farGlow += SampleSignal(uv + float2(-r.x, r.y) * 2.5);
                 float3 glow = nearGlow * 0.175 + farGlow * 0.075;
                 float luminance = dot(glow, float3(0.2126, 0.7152, 0.0722));
                 float gate = smoothstep(_BloomThreshold, _BloomThreshold + 0.25, luminance);
                 return glow * gate;
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = Warp(i.uv);
                 float2 clampedUv = saturate(uv);
-                float3 clean = tex2D(_MainTex, clampedUv).rgb;
+                float3 clean = SampleSignal(clampedUv);
                 float3 beam = RasterBeam(clampedUv);
                 float lines = _ScanlineCount > 0.5 ? _ScanlineCount : max(1.0, _MainTex_TexelSize.w * 0.5);
-                float pixelsPerLine = _ScreenParams.y / max(lines, 1.0);
+                float pixelsPerLine = CROWFX_TARGET_RES.y / max(lines, 1.0);
                 float rasterAA = saturate((pixelsPerLine - 0.45) / 1.35);
                 float3 color = lerp(clean, beam, _ScanlineStrength * rasterAA);
 
                 if (_ConvergencePx > 0.001)
                 {
                     float2 convergence = float2(_MainTex_TexelSize.x * _ConvergencePx, 0.0);
-                    float red = tex2D(_MainTex, saturate(clampedUv + convergence)).r;
-                    float blue = tex2D(_MainTex, saturate(clampedUv - convergence)).b;
+                    float red = SampleSignal(saturate(clampedUv + convergence)).r;
+                    float blue = SampleSignal(saturate(clampedUv - convergence)).b;
                     float convergenceMix = saturate(_ConvergencePx / 3.0);
                     color.r = lerp(color.r, red, convergenceMix);
                     color.b = lerp(color.b, blue, convergenceMix);
@@ -146,7 +183,7 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
                 float3 glow = Halation(clampedUv);
                 color += max(0.0, glow - color * 0.35) * _Bloom;
                 float maskAA = saturate((_MaskScale - 0.65) / 1.35);
-                color *= lerp(float3(1.0, 1.0, 1.0), PhosphorMask(i.uv * _ScreenParams.xy), _MaskStrength * maskAA);
+                color *= lerp(float3(1.0, 1.0, 1.0), PhosphorMask(i.uv * CROWFX_TARGET_RES), _MaskStrength * maskAA);
 
                 float2 p = abs(uv * 2.0 - 1.0);
                 float roundedEdge = length(max(p - float2(0.88, 0.84), 0.0));
@@ -163,12 +200,12 @@ Shader "Hidden/CrowFX/Stages/CRTDisplay"
 
                 // Frame-decorrelated grain: no spatial translation, hence no scrolling pattern.
                 float frame = floor(_Time.y * 60.0);
-                float2 noisePixel = floor(i.uv * _ScreenParams.xy);
+                float2 noisePixel = floor(i.uv * CROWFX_TARGET_RES);
                 float grain = GaussianNoise(noisePixel + float2(frame * 17.17, frame * 113.1), 5.0);
                 float signalNoise = grain * _Noise * lerp(1.35, 0.45, saturate(dot(clean, float3(0.2126, 0.7152, 0.0722))));
                 color += signalNoise * inside;
                 color *= 1.0 + sin(_Time.y * 6.28318530718 * max(_FlickerHz, 1.0)) * _Flicker;
-                return float4(max(0.0, color), 1.0);
+                return float4(FromSignal(max(0.0, color)), 1.0);
             }
             ENDCG
         }

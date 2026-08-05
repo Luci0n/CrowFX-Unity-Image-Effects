@@ -1,8 +1,8 @@
 {
     "name": "com.luci0n.crowfx",
-    "version": "2.0.1",
+    "version": "2.1.0",
     "displayName": "CrowFX",
-    "description": "A real-time Unity image-effects stack with calibrated CRT, VHS, composite, film, lens, digital-video, temporal, color, and stylization tools.",
+    "description": "A real-time Unity image-effects stack with calibrated CRT, VHS, composite, film, lens, digital-video, temporal, color, and stylization tools. Built for the Built-in Render Pipeline; URP and HDRP adapters are experimental.",
     "unity": "2022.3",
     "dependencies": {},
     "documentationUrl": "https://github.com/Luci0n/CrowFX-Unity-Image-Effects#readme",

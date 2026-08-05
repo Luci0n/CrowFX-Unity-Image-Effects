@@ -8,11 +8,13 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float4 _MainTex_TexelSize;
             float _Intensity, _TapeSpeed, _HorizontalJitter, _LineWobble;
             float _Tracking, _TrackingSpeed, _TrackingWidth;
@@ -133,14 +135,15 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 float envelope = active * lineEnvelope * max(body, tail * 0.58);
 
                 float leadingEdge = active * lineEnvelope * exp2(-x * x * 18000.0);
-                float rfNoise = GaussianNoise(float2(floor(uv.x * _ScreenParams.x * 0.32),
+                float rfNoise = GaussianNoise(float2(floor(uv.x * _MainTex_TexelSize.z * 0.32),
                                                      outputLine + epoch * 103.0), salt);
                 float polarity = step(0.5, Hash21(eventId + 83.9));
                 return float4(envelope, leadingEdge, rfNoise, polarity);
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 float2 uv = i.uv;
                 float time = _Time.y * _TapeSpeed;
                 float frameRate = _Standard < 0.5 ? 29.97 : 25.0;
@@ -185,11 +188,11 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
                 float fieldY = (fieldLine + 0.5) * _MainTex_TexelSize.y;
                 warpedUv.y = lerp(warpedUv.y, saturate(fieldY), _Interlace);
 
-                float3 clean = tex2D(_MainTex, uv).rgb;
+                float3 clean = CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb;
                 float lumaRadius = (0.75 + _TapeMode * 0.65 + _Generation * 0.10) * _MainTex_TexelSize.x;
-                float3 lumaCenter = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, warpedUv).rgb));
-                float lumaLeft = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(warpedUv - float2(lumaRadius, 0))).rgb)).x;
-                float lumaRight = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(warpedUv + float2(lumaRadius, 0))).rgb)).x;
+                float3 lumaCenter = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, warpedUv).rgb));
+                float lumaLeft = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warpedUv - float2(lumaRadius, 0))).rgb)).x;
+                float lumaRight = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warpedUv + float2(lumaRadius, 0))).rgb)).x;
                 // FM luminance retains much more horizontal bandwidth than color, but it is
                 // still bandwidth-limited and becomes softer at slow tape speeds/generations.
                 float luma = lumaCenter.x * 0.56 + (lumaLeft + lumaRight) * 0.22;
@@ -198,16 +201,16 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
 
                 // VHS stores chroma at much lower bandwidth than luma: delayed, broad, one-sided smear.
                 float2 chromaUv = saturate(warpedUv - float2(chromaOffset, 0.0));
-                float3 yiq0 = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, chromaUv).rgb));
-                float3 yiq1 = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(chromaUv - float2(chromaRadius * 0.5, 0))).rgb));
-                float3 yiq2 = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(chromaUv - float2(chromaRadius, 0))).rgb));
+                float3 yiq0 = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, chromaUv).rgb));
+                float3 yiq1 = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(chromaUv - float2(chromaRadius * 0.5, 0))).rgb));
+                float3 yiq2 = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(chromaUv - float2(chromaRadius, 0))).rgb));
                 float verticalRadius = _VerticalChromaBlur * modeLoss * _MainTex_TexelSize.y;
-                float3 yiqUp = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(chromaUv + float2(0, verticalRadius))).rgb));
-                float3 yiqDn = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex, saturate(chromaUv - float2(0, verticalRadius))).rgb));
+                float3 yiqUp = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(chromaUv + float2(0, verticalRadius))).rgb));
+                float3 yiqDn = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(chromaUv - float2(0, verticalRadius))).rgb));
                 float2 chroma = yiq0.yz * 0.38 + yiq1.yz * 0.25 + yiq2.yz * 0.13 + (yiqUp.yz + yiqDn.yz) * 0.12;
                 chroma *= 1.0 - saturate(_ColorLoss + _Generation * 0.045);
 
-                float2 pixel = floor(uv * _ScreenParams.xy);
+                float2 pixel = floor(uv * _MainTex_TexelSize.zw);
                 float rf0 = GaussianNoise(pixel + float2(field * 71.0, field * 19.0), 53.0);
                 float rfL = GaussianNoise(pixel + float2(-1.0 + field * 71.0, field * 19.0), 53.0);
                 float rfR = GaussianNoise(pixel + float2(1.0 + field * 71.0, field * 19.0), 53.0);
@@ -235,7 +238,7 @@ Shader "Hidden/CrowFX/Stages/VHSTape"
 
                 // Most decks conceal detected loss with the preceding scanline. Detection is
                 // imperfect, leaving an inverted flash, granular RF body, and desaturated tail.
-                float previousLineY = RGBtoYIQ(ToSignalRGB(tex2D(_MainTex,
+                float previousLineY = RGBtoYIQ(ToSignalRGB(CROWFX_SAMPLE_SCREEN(_MainTex,
                     saturate(warpedUv - float2(0.0, _MainTex_TexelSize.y))).rgb)).x;
                 float rawLoss = lerp(0.04, 0.92, polarity) + rfNoise * 0.52 + leadingEdge * 0.55;
                 float concealedLoss = lerp(rawLoss, previousLineY + rfNoise * 0.12, 0.32);

@@ -21,12 +21,14 @@ Shader "Hidden/CrowFX/Stages/Pregrade"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
             #include "CE_Common.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
             float _PregradeEnabled, _Exposure, _Contrast, _Gamma, _Saturation;
             float4 _PregradeTint;
             float _PregradeTintStrength;
@@ -78,9 +80,10 @@ Shader "Hidden/CrowFX/Stages/Pregrade"
                 return c;
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
-                float3 c = tex2D(_MainTex, i.uv).rgb;
+                CROWFX_SETUP_STEREO(i);
+                float3 c = CROWFX_SAMPLE_SCREEN(_MainTex, i.uv).rgb;
                 c = ApplyPregrade(c);
                 return float4(c, 1);
             }

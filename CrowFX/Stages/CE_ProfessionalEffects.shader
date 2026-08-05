@@ -12,15 +12,25 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
+            #include "CE_Common.cginc"
+            #include "CE_SceneBuffers.cginc"
 
-            sampler2D _MainTex, _HistoryTex;
-            sampler2D _CameraMotionVectorsTexture;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
+            CROWFX_DECLARE_SCREEN_TEX(_HistoryTex)
             float4 _MainTex_TexelSize;
             float _ProfessionalMode, _EffectIntensity;
-            float4 _ParamA, _ParamB;
+            float4 _ParamA, _ParamB, _ParamC;
+            float _DisplaySignalDomain;
+
+            // Resolution of the render target actually being processed. _ScreenParams
+            // describes the backbuffer, which diverges from the target under render
+            // scale, dynamic resolution, split screen, and off-screen cameras.
+            #define CROWFX_TARGET_RES (_MainTex_TexelSize.zw)
 
             float Hash21(float2 p)
             {
@@ -75,6 +85,20 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 #endif
             }
 
+            // Panel simulation multiplies and offsets encoded drive values, not
+            // radiometric intensity.  Running it in linear makes subpixel masks and
+            // inversion far weaker than intended in Linear-space projects, so the
+            // LCD stage matches the tape and composite stages and works on signal.
+            float3 ToDisplaySignal(float3 c)
+            {
+                return (_DisplaySignalDomain > 0.5) ? ToSignal(c) : max(c, 0.0);
+            }
+
+            float3 FromDisplaySignal(float3 c)
+            {
+                return (_DisplaySignalDomain > 0.5) ? FromSignal(c) : c;
+            }
+
             float3 RGBtoYIQ(float3 c)
             {
                 return float3(dot(c, float3(0.299, 0.587, 0.114)),
@@ -94,62 +118,171 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 // Lens mix scales physical parameters instead of cross-fading two different
                 // geometries. Cross-fading a warped and unwarped frame creates false double edges.
                 float lensMix = saturate(_EffectIntensity);
-                float distortion = _ParamA.x * lensMix;
                 float chromaPx = _ParamA.y * lensMix;
                 float vignette = _ParamA.z * lensMix;
                 float bloom = _ParamA.w * lensMix;
-                float rolling = _ParamB.x * lensMix;
                 float noiseAmount = _ParamB.y * lensMix;
                 float deadRate = _ParamB.z * lensMix;
                 float bloomRadius = _ParamB.w;
 
-                float2 p = uv * 2.0 - 1.0;
-                float rollingWave = sin(_Time.y * 9.0 + uv.y * 13.0) * rolling * _MainTex_TexelSize.x;
-                p.x += rollingWave * 2.0;
+                // Keep this mapping shared with stages that read scene depth/normals after
+                // Lens & Sensor. In particular, Edge Outline must transform every kernel
+                // sample through the same nonlinear mapping or the line remains undistorted.
+                float2 p;
+                float2 lensP;
+                float radius01;
+                float coverage;
+                float2 warped = CrowFX_LensSensorWarpUV(
+                    uv,
+                    _ParamA.x,
+                    _ParamB.x,
+                    _EffectIntensity,
+                    _ParamC.x,
+                    _ParamC.y,
+                    _MainTex_TexelSize,
+                    p,
+                    lensP,
+                    radius01,
+                    coverage);
 
-                // Aspect-correct, bounded radial mapping. It keeps positive barrel/fisheye
-                // distortion inside the image instead of saturating many UVs onto one edge texel.
-                float aspect = max(_ScreenParams.x / max(_ScreenParams.y, 1.0), 1e-4);
-                float2 lensP = float2(p.x * aspect, p.y);
-                float cornerRadius = sqrt(aspect * aspect + 1.0);
-                float radius01 = saturate(length(lensP) / max(cornerRadius, 1e-4));
-                float radialScale = max(0.25, 1.0 - distortion * 1.10 * (1.0 - radius01 * radius01));
-                lensP *= radialScale;
-                p = float2(lensP.x / aspect, lensP.y);
-
-                float2 rawWarped = p * 0.5 + 0.5;
                 float2 halfTexel = _MainTex_TexelSize.xy * 0.5;
-                float2 warped = clamp(rawWarped, halfTexel, 1.0 - halfTexel);
-                float2 outside = max(abs(rawWarped - 0.5) - 0.5, 0.0);
-                float edgeValidity = 1.0 - smoothstep(0.0, max(_MainTex_TexelSize.x, _MainTex_TexelSize.y) * 2.0,
-                                                      max(outside.x, outside.y));
+                float aspect = max(CROWFX_TARGET_RES.x / max(CROWFX_TARGET_RES.y, 1.0), 1e-4);
+
                 float2 radialDir = lensP / max(length(lensP), 1e-5);
                 radialDir.x /= aspect;
                 float2 radial = radialDir * chromaPx * _MainTex_TexelSize.xy * radius01;
 
                 float3 color;
-                color.r = tex2D(_MainTex, clamp(warped + radial, halfTexel, 1.0 - halfTexel)).r;
-                color.g = tex2D(_MainTex, saturate(warped)).g;
-                color.b = tex2D(_MainTex, clamp(warped - radial, halfTexel, 1.0 - halfTexel)).b;
-                color = lerp(tex2D(_MainTex, uv).rgb, color, edgeValidity);
+                color.r = CROWFX_SAMPLE_SCREEN(_MainTex, clamp(warped + radial, halfTexel, 1.0 - halfTexel)).r;
+                color.g = CROWFX_SAMPLE_SCREEN(_MainTex, warped).g;
+                color.b = CROWFX_SAMPLE_SCREEN(_MainTex, clamp(warped - radial, halfTexel, 1.0 - halfTexel)).b;
 
                 float2 br = _MainTex_TexelSize.xy * bloomRadius;
-                float3 glow = (tex2D(_MainTex, saturate(warped + float2(br.x, 0))).rgb +
-                               tex2D(_MainTex, saturate(warped - float2(br.x, 0))).rgb +
-                               tex2D(_MainTex, saturate(warped + float2(0, br.y))).rgb +
-                               tex2D(_MainTex, saturate(warped - float2(0, br.y))).rgb) * 0.25;
+                float3 glow = (CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warped + float2(br.x, 0))).rgb +
+                               CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warped - float2(br.x, 0))).rgb +
+                               CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warped + float2(0, br.y))).rgb +
+                               CROWFX_SAMPLE_SCREEN(_MainTex, saturate(warped - float2(0, br.y))).rgb) * 0.25;
                 float glowGate = smoothstep(0.7, 1.15, dot(glow, float3(0.2126, 0.7152, 0.0722)));
                 color += glow * glowGate * bloom;
 
                 float radialVignette = smoothstep(0.2, 1.3, dot(p, p));
                 color *= 1.0 - vignette * radialVignette;
                 float frame = floor(_Time.y * 60.0);
-                float2 pixel = floor(uv * _ScreenParams.xy);
+                float2 pixel = floor(uv * CROWFX_TARGET_RES);
                 float grain = TemporalGaussianNoise(pixel, frame, 3.0);
                 color += grain * noiseAmount * lerp(1.3, 0.45, saturate(dot(color, float3(0.333, 0.333, 0.333))));
                 float dead = step(1.0 - deadRate * 0.0015, Hash21(pixel + 317.0));
                 float deadValue = Hash21(pixel + 811.0) > 0.5 ? 0.0 : 1.0;
                 color = lerp(color, float3(deadValue, deadValue, deadValue), dead);
+
+                // Applied last so the uncovered region carries no bloom, grain or sensor
+                // defects either: outside the image circle nothing reached the sensor.
+                return color * coverage;
+            }
+
+            // -----------------------------------------------------------------------------
+            // Film dust
+            //
+            // Dust on film is a sparse population of hard-edged, irregular particles that is
+            // redrawn every frame as fresh film passes the gate. Most of it reads BRIGHT:
+            // a particle sitting on the negative blocks printing light, leaving unexposed
+            // white on the print. Dark specks are the minority - debris on the print itself
+            // or in the gate - and some of that gate dirt persists for a fraction of a second
+            // while everything else is replaced frame to frame.
+            //
+            // Each layer scatters at most one particle per cell of its own lattice, but the
+            // particle is jittered freely inside the cell, sized with a cubic bias toward
+            // small, rotated, and optionally stretched into a fibre. Three non-harmonic
+            // densities are summed, which leaves no perceptible lattice while costing one
+            // cell lookup per layer rather than a neighbourhood search.
+            //
+            // Returns bright coverage in .x and dark coverage in .y.
+            // -----------------------------------------------------------------------------
+            float2 FilmDustLayer(float2 p, float frame, float amount, float opacity, float polarity,
+                                 float density, float hitRate, float minRadius, float maxRadius,
+                                 float maxStretch, float salt, float targetHeight)
+            {
+                float2 scaled = p * density;
+                float2 cell = floor(scaled);
+                float2 local = frac(scaled);
+
+                // A frame-independent draw marks a minority of positions as gate dirt, which
+                // holds for roughly two thirds of a second instead of being replaced.
+                float sticky = step(0.86, Hash31(float3(cell, 0.0) + salt * 3.17));
+                float timeIndex = lerp(frame, floor(frame * 0.06), sticky);
+
+                // Time is its own hash dimension. Adding it to the cell id, as the previous
+                // implementation did, translates the entire field instead of regenerating it.
+                float3 key = float3(cell, timeIndex) + salt;
+
+                float present = step(1.0 - saturate(amount) * hitRate, Hash31(key));
+
+                float sizeRand = Hash31(key + 41.1);
+                float stretchRand = Hash31(key + 63.9);
+                float angleRand = Hash31(key + 87.3);
+
+                // Bright particles are dust on the negative blocking printing light, which
+                // leaves the print unexposed. Dark particles are dirt on the print or in the
+                // gate blocking projected light.
+                float bright = step(1.0 - saturate(polarity), Hash31(key + 103.7));
+
+                // Real particles are not uniformly opaque: fibres, emulsion chips and grit
+                // block light completely, while fine dust, oil and moisture only attenuate it.
+                // Taking the larger of an independent draw and the size draw makes big debris
+                // skew opaque, so lowering the control mostly thins out the fine specks.
+                float opacityRand = max(Hash31(key + 131.7), sizeRand);
+                float particleOpacity = saturate(opacity) * lerp(0.5, 1.0, opacityRand);
+
+                // Cubic bias: mostly fine grit, occasionally something large.
+                float radius = lerp(minRadius, maxRadius, sizeRand * sizeRand * sizeRand);
+                float stretch = lerp(1.0, maxStretch, stretchRand * stretchRand);
+                float2 shape = float2(radius * stretch, radius * rsqrt(stretch));
+
+                // Fit the particle inside its cell so no edge is ever clipped, then spend
+                // whatever room is left on scattering it. Small particles - the majority -
+                // end up almost freely placed, which is what hides the lattice.
+                float extent = max(shape.x, shape.y);
+                float room = max(0.0, 0.5 - extent);
+                float2 jitter = float2(Hash31(key + 11.3), Hash31(key + 27.7)) * 2.0 - 1.0;
+
+                float2 d = local - (0.5 + jitter * room);
+                float angle = angleRand * 6.2831853;
+                float s = sin(angle);
+                float c = cos(angle);
+                d = float2(c * d.x - s * d.y, s * d.x + c * d.y);
+
+                float dist = length(d / max(shape, 1e-5));
+
+                // Analytic edge width: one output pixel expressed in cell units over the
+                // narrowest axis of the particle. Screen-space derivatives cannot be used
+                // here because cell and local are discontinuous at every cell boundary.
+                float pixelInCells = density / max(targetHeight, 1.0);
+                float aa = saturate(pixelInCells / max(min(shape.x, shape.y), 1e-5));
+                float mask = present * particleOpacity * (1.0 - smoothstep(1.0 - aa, 1.0 + aa, dist));
+
+                return float2(mask * bright, mask * (1.0 - bright));
+            }
+
+            float3 FilmDust(float3 color, float2 uv, float amount, float opacity, float polarity,
+                            float frame, float aspect, float targetHeight)
+            {
+                if (amount <= 0.0001 || opacity <= 0.0001) return color;
+
+                // Square-ish working space so particles stay round instead of inheriting
+                // the frame's aspect ratio the way a fixed uv lattice does.
+                float2 p = float2(uv.x * aspect, uv.y);
+
+                float2 fine   = FilmDustLayer(p, frame, amount, opacity, polarity, 41.0, 0.10, 0.035, 0.130, 1.6,  7.0, targetHeight);
+                float2 medium = FilmDustLayer(p, frame, amount, opacity, polarity, 23.0, 0.08, 0.050, 0.170, 2.2, 29.0, targetHeight);
+                float2 fibres = FilmDustLayer(p, frame, amount, opacity, polarity,  9.0, 0.07, 0.040, 0.065, 6.0, 53.0, targetHeight);
+
+                float brightCoverage = saturate(fine.x + medium.x + fibres.x);
+                float darkCoverage   = saturate(fine.y + medium.y + fibres.y);
+
+                // Dark debris first: a bright particle is opaque on the negative, so where
+                // the two overlap the unexposed highlight wins.
+                color = lerp(color, float3(0.015, 0.014, 0.012), darkCoverage);
+                color = lerp(color, float3(0.97, 0.96, 0.92), brightCoverage);
                 return color;
             }
 
@@ -167,31 +300,29 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float frame = floor(_Time.y * 24.0);
                 float2 weavePx = float2(sin(frame * 1.618), cos(frame * 1.173)) * weave;
                 float2 sampleUv = saturate(uv + weavePx * _MainTex_TexelSize.xy);
-                float3 color = tex2D(_MainTex, sampleUv).rgb;
+                float3 color = CROWFX_SAMPLE_SCREEN(_MainTex, sampleUv).rgb;
 
                 float2 r = _MainTex_TexelSize.xy * halationRadius;
-                float3 surround = (tex2D(_MainTex, saturate(sampleUv + float2(r.x, 0))).rgb +
-                                   tex2D(_MainTex, saturate(sampleUv - float2(r.x, 0))).rgb +
-                                   tex2D(_MainTex, saturate(sampleUv + float2(0, r.y))).rgb +
-                                   tex2D(_MainTex, saturate(sampleUv - float2(0, r.y))).rgb) * 0.25;
+                float3 surround = (CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv + float2(r.x, 0))).rgb +
+                                   CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv - float2(r.x, 0))).rgb +
+                                   CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv + float2(0, r.y))).rgb +
+                                   CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv - float2(0, r.y))).rgb) * 0.25;
                 float hot = smoothstep(0.62, 1.05, dot(surround, float3(0.2126, 0.7152, 0.0722)));
                 color += surround * float3(1.0, 0.22, 0.08) * hot * halation;
 
-                float2 grainPixel = floor(uv * _ScreenParams.xy / grainSize);
+                float2 grainPixel = floor(uv * CROWFX_TARGET_RES / grainSize);
                 float fineGrain = TemporalGaussianNoise(grainPixel, frame, 7.0);
                 float coarseGrain = TemporalGaussianNoise(floor(grainPixel * 0.43), frame, 11.0);
                 float grain = fineGrain * 0.78 + coarseGrain * 0.22;
                 float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
                 color += grain * grainAmount * lerp(0.55, 1.25, 1.0 - saturate(abs(luma - 0.45) * 1.8));
 
-                float2 dustCell = floor(uv * float2(180.0, 100.0));
-                float dustSeed = Hash21(dustCell + floor(frame / 3.0));
-                float2 dustLocal = frac(uv * float2(180.0, 100.0)) - 0.5;
-                float dust = step(1.0 - dustAmount * 0.035, dustSeed) * smoothstep(0.32, 0.02, length(dustLocal));
                 float scratchX = abs(frac(uv.x * 317.0 + Hash21(float2(frame, frame)) * 0.13) - 0.5);
                 float scratch = step(1.0 - scratchAmount * 0.025, Hash21(float2(floor(uv.x * 317.0), floor(frame / 8.0)))) * smoothstep(0.035, 0.0, scratchX);
-                color = lerp(color, float3(0.02, 0.02, 0.02), dust * 0.85);
                 color += scratch * 0.32;
+
+                float aspect = max(CROWFX_TARGET_RES.x / max(CROWFX_TARGET_RES.y, 1.0), 1e-4);
+                color = FilmDust(color, uv, dustAmount, _ParamC.x, _ParamC.y, frame, aspect, CROWFX_TARGET_RES.y);
                 color *= 1.0 + (Noise21(float2(_Time.y * 4.0, 7.1)) - 0.5) * flicker;
                 return color;
             }
@@ -202,9 +333,9 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float displacement = _ParamA.y;
                 float freezeRate = _ParamA.z;
                 float colorSplit = _ParamA.w;
-                float2 block = floor(uv * _ScreenParams.xy / blockSize);
-                float2 blockUv = (block * blockSize + blockSize * 0.5) / _ScreenParams.xy;
-                float2 motion = tex2D(_CameraMotionVectorsTexture, blockUv).rg;
+                float2 block = floor(uv * CROWFX_TARGET_RES / blockSize);
+                float2 blockUv = (block * blockSize + blockSize * 0.5) / CROWFX_TARGET_RES;
+                float2 motion = CrowFX_SampleMotionVectorFlipAware(blockUv, _MainTex_TexelSize);
                 float epoch = floor(_Time.y * 12.0);
                 float eventNoise = Hash21(block + epoch * float2(13.0, 47.0));
                 float frozen = step(1.0 - freezeRate, eventNoise);
@@ -214,13 +345,13 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                                      * displacement * _MainTex_TexelSize.xy;
                 float quietMotion = 1.0 - saturate(length(motion) * 256.0);
                 float2 shifted = saturate(uv - motion * displacement + codecVector * quietMotion * frozen);
-                float3 current = tex2D(_MainTex, shifted).rgb;
-                float3 history = tex2D(_HistoryTex, shifted).rgb;
+                float3 current = CROWFX_SAMPLE_SCREEN(_MainTex, shifted).rgb;
+                float3 history = CROWFX_SAMPLE_SCREEN(_HistoryTex, shifted).rgb;
                 float3 color = lerp(current, history, frozen);
                 float split = colorSplit * _MainTex_TexelSize.x * frozen;
                 float splitMix = frozen * saturate(colorSplit * 0.25);
-                color.r = lerp(color.r, tex2D(_MainTex, saturate(shifted + float2(split, 0))).r, splitMix);
-                color.b = lerp(color.b, tex2D(_HistoryTex, saturate(shifted - float2(split, 0))).b, splitMix);
+                color.r = lerp(color.r, CROWFX_SAMPLE_SCREEN(_MainTex, saturate(shifted + float2(split, 0))).r, splitMix);
+                color.b = lerp(color.b, CROWFX_SAMPLE_SCREEN(_HistoryTex, saturate(shifted - float2(split, 0))).b, splitMix);
                 return color;
             }
 
@@ -233,10 +364,10 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float mosquito = _ParamB.x;
                 float pumping = _ParamB.y;
 
-                float2 pixel = uv * _ScreenParams.xy;
-                float2 blockUv = (floor(pixel / blockSize) * blockSize + blockSize * 0.5) / _ScreenParams.xy;
-                float3 source = ToSignal(tex2D(_MainTex, uv).rgb);
-                float3 blockColor = ToSignal(tex2D(_MainTex, blockUv).rgb);
+                float2 pixel = uv * CROWFX_TARGET_RES;
+                float2 blockUv = (floor(pixel / blockSize) * blockSize + blockSize * 0.5) / CROWFX_TARGET_RES;
+                float3 source = ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb);
+                float3 blockColor = ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, blockUv).rgb);
                 float y = dot(source, float3(0.299, 0.587, 0.114));
                 float yBlock = dot(blockColor, float3(0.299, 0.587, 0.114));
                 float2 chroma = float2(source.r - y, source.b - y);
@@ -250,8 +381,8 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float3 compressed = float3(y + chroma.x, y - chroma.x * 0.51 - chroma.y * 0.19, y + chroma.y);
 
                 float2 dx = float2(_MainTex_TexelSize.x * 2.0, 0.0);
-                float3 left = ToSignal(tex2D(_MainTex, saturate(uv - dx)).rgb);
-                float3 right = ToSignal(tex2D(_MainTex, saturate(uv + dx)).rgb);
+                float3 left = ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv - dx)).rgb);
+                float3 right = ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv + dx)).rgb);
                 float3 edge = source * 2.0 - left - right;
                 compressed += edge * ringing * 0.18;
                 float edgeGate = saturate(length(edge) * 4.0);
@@ -268,13 +399,13 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float comb = _ParamB.x;
                 float standard = _ParamB.y;
 
-                float3 center = RGBtoYIQ(ToSignal(tex2D(_MainTex, uv).rgb));
+                float3 center = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, uv).rgb));
                 float radius = lerp(10.0, 0.65, bandwidth) * _MainTex_TexelSize.x;
                 float2 dx = float2(radius, 0.0);
-                float3 leftNear = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - dx * 0.5)).rgb));
-                float3 rightNear = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + dx * 0.5)).rgb));
-                float3 leftFar = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - dx)).rgb));
-                float3 rightFar = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + dx)).rgb));
+                float3 leftNear = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv - dx * 0.5)).rgb));
+                float3 rightNear = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv + dx * 0.5)).rgb));
+                float3 leftFar = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv - dx)).rgb));
+                float3 rightFar = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv + dx)).rgb));
 
                 // Composite chroma has far less horizontal bandwidth than luma.  A five-tap
                 // approximation gives the bandwidth control a useful soft-to-smeared range.
@@ -309,8 +440,8 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 chroma += carrier * lumaHigh * rainbow * decoderLeak * 1.35;
                 center.x += chromaLeak * dotCrawl * decoderLeak * 0.55;
 
-                float3 above = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv - float2(0, _MainTex_TexelSize.y))).rgb));
-                float3 below = RGBtoYIQ(ToSignal(tex2D(_MainTex, saturate(uv + float2(0, _MainTex_TexelSize.y))).rgb));
+                float3 above = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv - float2(0, _MainTex_TexelSize.y))).rgb));
+                float3 below = RGBtoYIQ(ToSignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(uv + float2(0, _MainTex_TexelSize.y))).rgb));
                 float2 verticalComb = chroma * 0.5 + (above.yz + below.yz) * 0.25;
                 chroma = lerp(chroma, verticalComb, saturate(comb) * 0.45);
                 return FromSignal(YIQtoRGB(float3(center.x, chroma)));
@@ -324,14 +455,14 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 float viewAngle = _ParamA.w;
                 float backlight = _ParamB.x;
                 float smear = _ParamB.y;
-                float2 pixel = floor(uv * _ScreenParams.xy / scale) * scale + scale * 0.5;
-                float2 sampleUv = pixel / _ScreenParams.xy;
-                float3 color = tex2D(_MainTex, sampleUv).rgb;
-                float3 response = (tex2D(_MainTex, saturate(sampleUv - float2(_MainTex_TexelSize.x * smear, 0))).rgb +
-                                   tex2D(_MainTex, saturate(sampleUv + float2(_MainTex_TexelSize.x * smear, 0))).rgb) * 0.5;
+                float2 pixel = floor(uv * CROWFX_TARGET_RES / scale) * scale + scale * 0.5;
+                float2 sampleUv = pixel / CROWFX_TARGET_RES;
+                float3 color = ToDisplaySignal(CROWFX_SAMPLE_SCREEN(_MainTex, sampleUv).rgb);
+                float3 response = (ToDisplaySignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv - float2(_MainTex_TexelSize.x * smear, 0))).rgb) +
+                                   ToDisplaySignal(CROWFX_SAMPLE_SCREEN(_MainTex, saturate(sampleUv + float2(_MainTex_TexelSize.x * smear, 0))).rgb)) * 0.5;
                 color = lerp(color, response, saturate(smear * 0.2));
 
-                float phase = fmod(floor(uv.x * _ScreenParams.x), 3.0);
+                float phase = fmod(floor(uv.x * CROWFX_TARGET_RES.x), 3.0);
                 float3 mask = phase < 0.5 ? float3(1.35, 0.82, 0.82) :
                               phase < 1.5 ? float3(0.82, 1.35, 0.82) : float3(0.82, 0.82, 1.35);
                 color *= lerp(float3(1.0, 1.0, 1.0), mask, subpixel);
@@ -340,12 +471,13 @@ Shader "Hidden/CrowFX/Stages/ProfessionalEffects"
                 color *= float3(1.0 + viewAngle * 0.08, 1.0 - abs(viewAngle) * 0.05, 1.0 - viewAngle * 0.08);
                 float2 corner = abs(uv * 2.0 - 1.0);
                 color += backlight * pow(saturate(max(corner.x, corner.y)), 5.0) * 0.12;
-                return color;
+                return FromDisplaySignal(color);
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
-                float3 original = tex2D(_MainTex, i.uv).rgb;
+                CROWFX_SETUP_STEREO(i);
+                float3 original = CROWFX_SAMPLE_SCREEN(_MainTex, i.uv).rgb;
                 float3 effected = original;
                 int mode = (int)(_ProfessionalMode + 0.5);
                 if (mode == 0) effected = LensSensor(i.uv);

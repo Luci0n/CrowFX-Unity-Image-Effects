@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.Profiling;
+using UnityEngine.Rendering;
 using CrowFX.Helpers;
 using SectionKeys = CrowFX.Helpers.CrowFXSectionKeys;
 
@@ -45,10 +46,25 @@ namespace CrowFX
         public enum MaskChannel { Luminance = 0, Red = 1, Green = 2, Blue = 3, Alpha = 4 }
         public enum VhsStandard { NTSC = 0, PAL = 1 }
         public enum VhsTapeMode { SP = 0, LP = 1, EP = 2 }
-        public enum SamplingFilter { Point = 0, Bilinear = 1 }
+        public enum SamplingFilter { Point = 0, Bilinear = 1, Box = 2 }
         public enum QualityTier { Low = 0, Balanced = 1, Reference = 2 }
         public enum MaskPlacement { EntireStack = 0, BeforeSignalAndDisplays = 1 }
         public enum SharpenMode { UnsharpMask = 0, ContrastAdaptive = 1 }
+
+        /// <summary>What lens distortion does with output pixels whose source coordinate falls
+        /// outside the frame.</summary>
+        public enum LensEdgeMode
+        {
+            /// <summary>Magnify just enough that the distorted image always covers the output,
+            /// the way a sensor crops a lens image circle. Nothing is missing; edges are cropped.</summary>
+            Overscan = 0,
+            /// <summary>Stretch the border pixels outward.</summary>
+            Clamp = 1,
+            /// <summary>Reflect the image back across its own border.</summary>
+            Mirror = 2,
+            /// <summary>Leave it black, as a lens whose image circle is smaller than the sensor does.</summary>
+            Black = 3
+        }
         private enum ProfessionalMode { LensSensor = 0, Film = 1, MotionGlitch = 2, DigitalVideo = 3, Composite = 4, Lcd = 5 }
 
         private static class ShaderProps
@@ -176,6 +192,13 @@ namespace CrowFX
             public static readonly int EdgeUseNormals = Shader.PropertyToID("_EdgeUseNormals");
             public static readonly int EdgeNormalThreshold = Shader.PropertyToID("_EdgeNormalThreshold");
 
+            public static readonly int LensWarpEnabled = Shader.PropertyToID("_LensWarpEnabled");
+            public static readonly int LensWarpIntensity = Shader.PropertyToID("_LensWarpIntensity");
+            public static readonly int LensDistortion = Shader.PropertyToID("_LensDistortion");
+            public static readonly int LensRollingShutter = Shader.PropertyToID("_LensRollingShutter");
+            public static readonly int LensOverscan = Shader.PropertyToID("_LensOverscan");
+            public static readonly int LensEdgeMode = Shader.PropertyToID("_LensEdgeMode");
+
             public static readonly int UseMask = Shader.PropertyToID("_UseMask");
             public static readonly int MaskTex = Shader.PropertyToID("_MaskTex");
             public static readonly int MaskThreshold = Shader.PropertyToID("_MaskThreshold");
@@ -240,10 +263,14 @@ namespace CrowFX
             public static readonly int VhsAgc = Shader.PropertyToID("_AgcInstability");
             public static readonly int VhsVerticalChroma = Shader.PropertyToID("_VerticalChromaBlur");
 
+            public static readonly int DisplaySignalDomain = Shader.PropertyToID("_DisplaySignalDomain");
+            public static readonly int SceneBufferMode = Shader.PropertyToID("_CrowFXSceneBufferMode");
+
             public static readonly int ProfessionalMode = Shader.PropertyToID("_ProfessionalMode");
             public static readonly int EffectIntensity = Shader.PropertyToID("_EffectIntensity");
             public static readonly int ParamA = Shader.PropertyToID("_ParamA");
             public static readonly int ParamB = Shader.PropertyToID("_ParamB");
+            public static readonly int ParamC = Shader.PropertyToID("_ParamC");
             public static readonly int HistoryTex = Shader.PropertyToID("_HistoryTex");
 
             public static readonly int Count = Shader.PropertyToID("_Count");
@@ -274,6 +301,10 @@ namespace CrowFX
         [Tooltip("Entire Stack masks the final result. Before Signal & Displays masks creative processing while tape, composite, CRT and LCD continue across the whole frame.")]
         public MaskPlacement maskPlacement = MaskPlacement.EntireStack;
 
+        [EffectSection(SectionKeys.Master, 30)]
+        [Tooltip("Runs CRT and LCD panel simulation on the gamma-encoded signal, matching the tape and composite stages. This is physically correct: scanlines, phosphor masks and subpixel structure scale drive values, not radiometric intensity. Disabling it reproduces the weaker CRT and LCD response CrowFX 2.0 produced in Linear color-space projects.")]
+        public bool displaySignalDomain = true;
+
         [Tooltip("Shared profile asset used to sync settings across cameras.")]
         public CrowFXProfile profile;
         [Tooltip("If enabled, this component live-syncs with its assigned profile.")]
@@ -293,7 +324,7 @@ namespace CrowFX
         public Vector2Int virtualResolution = new Vector2Int(720, 480);
         [EffectSection(SectionKeys.Sampling, 30)][Tooltip("Sub-pixel phase of the sampling lattice, measured in grid cells.")] public Vector2 samplingPhase = Vector2.zero;
         [EffectSection(SectionKeys.Sampling, 40)][Tooltip("Pixel width-to-height ratio. Values above one create wider pixels.")][Range(0.25f, 4f)] public float pixelAspect = 1f;
-        [EffectSection(SectionKeys.Sampling, 50)][Tooltip("Point preserves hard texels; Bilinear preserves smooth source reconstruction.")] public SamplingFilter samplingFilter = SamplingFilter.Point;
+        [EffectSection(SectionKeys.Sampling, 50)][Tooltip("Point preserves hard texels. Bilinear preserves smooth source reconstruction. Box averages every source texel a cell covers, which removes the crawling and shimmer heavy pixelation otherwise produces on thin geometry and highlights.")] public SamplingFilter samplingFilter = SamplingFilter.Point;
 
         // -------------------- Pregrade --------------------
         [EffectSection(SectionKeys.Pregrade, 0)][Tooltip("Enable exposure, contrast, gamma, and saturation adjustments before posterization.")] public bool pregradeEnabled = false;
@@ -589,6 +620,7 @@ namespace CrowFX
         [EffectSection(SectionKeys.LensSensor, 0)] public bool lensSensorEnabled = false;
         [EffectSection(SectionKeys.LensSensor, 10)][Range(0f, 1f)] public float lensSensorIntensity = 1f;
         [EffectSection(SectionKeys.LensSensor, 20)][Tooltip("Barrel (positive) or pincushion (negative) distortion.")][Range(-0.5f, 0.5f)] public float lensDistortion = 0f;
+        [EffectSection(SectionKeys.LensSensor, 25)][Tooltip("What to do where distortion pulls the image away from the frame edge. Overscan magnifies until the distorted image covers the output, matching a sensor cropping a lens image circle. Clamp smears the border outward, Mirror reflects the image back, and Black leaves the uncovered area empty.")] public LensEdgeMode lensEdgeMode = LensEdgeMode.Overscan;
         [EffectSection(SectionKeys.LensSensor, 30)][Tooltip("Lateral lens chromatic aberration in pixels.")][Range(0f, 8f)] public float lensChromaticAberration = 0f;
         [EffectSection(SectionKeys.LensSensor, 40)][Range(0f, 1f)] public float lensVignette = 0f;
         [EffectSection(SectionKeys.LensSensor, 50)][Range(0f, 2f)] public float lensBloom = 0f;
@@ -605,8 +637,10 @@ namespace CrowFX
         [EffectSection(SectionKeys.Film, 40)][Range(0f, 2f)] public float filmHalation = 0.15f;
         [EffectSection(SectionKeys.Film, 50)][Range(0.5f, 8f)] public float filmHalationRadius = 2f;
         [EffectSection(SectionKeys.Film, 60)][Tooltip("Mechanical gate weave in pixels.")][Range(0f, 6f)] public float filmGateWeave = 0.25f;
-        [EffectSection(SectionKeys.Film, 70)][Range(0f, 1f)] public float filmDust = 0f;
-        [EffectSection(SectionKeys.Film, 80)][Range(0f, 1f)] public float filmScratches = 0f;
+        [EffectSection(SectionKeys.Film, 70)][Tooltip("Density of dust and debris on the film. Particles are redrawn each frame at 24 fps, and some gate dirt holds for a fraction of a second. Particle size scales with output resolution.")][Range(0f, 1f)] public float filmDust = 0f;
+        [EffectSection(SectionKeys.Film, 72)][Tooltip("How strongly particles block light. Opaque debris, fibres and emulsion chips block it completely; fine grit, oil and moisture only attenuate it. Larger particles skew opaque on their own, so lowering this mainly softens the fine specks.")][Range(0f, 1f)] public float filmDustOpacity = 1f;
+        [EffectSection(SectionKeys.Film, 74)][Tooltip("Balance between bright and dark particles. Bright is dust on the negative blocking printing light, which leaves the print unexposed and is what release prints accumulate. Dark is dirt on the print or in the projector gate blocking projected light. One means all bright, zero means all dark.")][Range(0f, 1f)] public float filmDustPolarity = 0.72f;
+        [EffectSection(SectionKeys.Film, 80)][Tooltip("Frequency of vertical emulsion scratches.")][Range(0f, 1f)] public float filmScratches = 0f;
         [EffectSection(SectionKeys.Film, 90)][Range(0f, 0.2f)] public float filmFlicker = 0.01f;
 
         // -------------------- Motion & datamosh --------------------
@@ -669,8 +703,11 @@ namespace CrowFX
         [EffectSection(SectionKeys.Shaders, 160)][Tooltip("Optional override for the professional effect-family shader.")] public Shader professionalEffectsShader;
 
         // -------------------- Materials --------------------
-        [SerializeField, HideInInspector] private int _analogSettingsVersion;
-        private const int CurrentAnalogSettingsVersion = 1;
+        // Newly constructed components start at the current version so migrations never
+        // fire on them. Components deserialized from an existing scene, prefab or profile
+        // overwrite this with the version they were saved at.
+        [SerializeField, HideInInspector] private int _analogSettingsVersion = CurrentAnalogSettingsVersion;
+        private const int CurrentAnalogSettingsVersion = 2;
 
         private Material _mSampling, _mPregrade, _mJitter, _mGhosting, _mBleed, _mUnsharp, _mPosterize, _mDither, _mPalette, _mEdges, _mVhs, _mCrt, _mPresent;
         private Material _mTexMask, _mDepthMask;
@@ -849,11 +886,17 @@ namespace CrowFX
 
         /// <summary>Renders the complete active CrowFX graph. Render-pipeline adapters can call this
         /// when their source and destination are backed by RenderTextures.</summary>
-        public void RenderStack(RenderTexture src, RenderTexture dest)
+        /// <param name="blendScale">Extra multiplier applied to <see cref="masterBlend"/> for this
+        /// invocation only. Adapters that carry their own intensity control pass it here instead of
+        /// writing to the serialized field, which would dirty the component and break when more than
+        /// one camera drives the same instance.</param>
+        public void RenderStack(RenderTexture src, RenderTexture dest, float blendScale = 1f)
         {
             if (src == null) { Graphics.Blit(src, dest); return; }
 
-            if (masterBlend <= 0.0001f)
+            float effectiveBlend = masterBlend * Mathf.Clamp01(blendScale);
+
+            if (effectiveBlend <= 0.0001f)
             {
                 Graphics.Blit(src, dest);
                 return;
@@ -925,13 +968,65 @@ namespace CrowFX
                 if (maskPlacement == MaskPlacement.EntireStack)
                     ApplyStackMasks(src, ref a, ref b);
 
-                RunPresent(src, a, dest);
+                RunPresent(src, a, dest, effectiveBlend);
             }
             finally
             {
                 if (a != null) RenderTexture.ReleaseTemporary(a);
                 if (b != null) RenderTexture.ReleaseTemporary(b);
                 Profiler.EndSample();
+            }
+        }
+
+        /// <summary>Single stages that can be rendered standalone over an arbitrary source image.
+        /// Stages needing scene depth, motion vectors or temporal history are absent because a
+        /// one-shot blit cannot supply them.</summary>
+        public enum PreviewStage
+        {
+            Sampling, Pregrade, Jitter, Bleed, Unsharp, Quantize, Palette,
+            LensSensor, Film, DigitalVideo, Composite, Vhs, Crt, Lcd
+        }
+
+        /// <summary>Renders one stage with the component's live settings, for editor previews.
+        /// This deliberately routes through the same Run* methods the render path uses, so a
+        /// preview cannot drift from what the stage actually does. Returns false when the stage
+        /// could not be rendered.</summary>
+        public bool RenderStagePreview(PreviewStage stage, Texture source, RenderTexture dest)
+        {
+            if (source == null || dest == null) return false;
+
+            var desc = dest.descriptor;
+            desc.depthBufferBits = 0;
+            desc.msaaSamples = 1;
+
+            RenderTexture a = null;
+            try
+            {
+                a = RenderTexture.GetTemporary(desc);
+                Graphics.Blit(source, a);
+
+                switch (stage)
+                {
+                    case PreviewStage.Sampling: RunSamplingGrid(a, dest); return true;
+                    case PreviewStage.Pregrade: RunPregrade(a, dest); return true;
+                    case PreviewStage.Jitter: RunChannelJitter(a, dest); return true;
+                    case PreviewStage.Bleed: RunBleed(a, dest); return true;
+                    case PreviewStage.Unsharp: RunUnsharp(a, dest); return true;
+                    case PreviewStage.Quantize: RunDithering(a, dest); return true;
+                    case PreviewStage.Palette: RunPaletteMapping(a, dest); return true;
+                    case PreviewStage.Vhs: RunVhs(a, dest); return true;
+                    case PreviewStage.Crt: RunCrt(a, dest); return true;
+                    case PreviewStage.LensSensor: RunProfessional(a, dest, ProfessionalMode.LensSensor); return true;
+                    case PreviewStage.Film: RunProfessional(a, dest, ProfessionalMode.Film); return true;
+                    case PreviewStage.DigitalVideo: RunProfessional(a, dest, ProfessionalMode.DigitalVideo); return true;
+                    case PreviewStage.Composite: RunProfessional(a, dest, ProfessionalMode.Composite); return true;
+                    case PreviewStage.Lcd: RunProfessional(a, dest, ProfessionalMode.Lcd); return true;
+                    default: return false;
+                }
+            }
+            finally
+            {
+                if (a != null) RenderTexture.ReleaseTemporary(a);
             }
         }
 
@@ -979,7 +1074,7 @@ namespace CrowFX
         public int GetEstimatedSamplesPerPixel()
         {
             int samples = 2;
-            if (IsSamplingActive()) samples += 1;
+            if (IsSamplingActive()) samples += GetEstimatedSamplingTaps();
             if (pregradeEnabled) samples += 1;
             if (lensSensorEnabled && lensSensorIntensity > 0f) samples += 8;
             if (filmEnabled && filmIntensity > 0f) samples += 5;
@@ -1018,6 +1113,20 @@ namespace CrowFX
             return bytes;
         }
 
+        /// <summary>Taps the sampling stage costs per pixel. Box integrates every source texel a
+        /// destination cell covers, so its cost scales with how far the image is being downsampled.</summary>
+        private int GetEstimatedSamplingTaps()
+        {
+            if (samplingFilter != SamplingFilter.Box) return 1;
+
+            // Mirrors the shader: one tap per two covered texels per axis, capped at 8x8.
+            float sourceHeight = Mathf.Max(1, Screen.height);
+            float gridHeight = useVirtualGrid ? Mathf.Max(1, virtualResolution.y) : sourceHeight;
+            float cellTexels = (sourceHeight / gridHeight) * Mathf.Max(1, pixelSize);
+            int perAxis = Mathf.Clamp(Mathf.CeilToInt(cellTexels * 0.5f), 1, 8);
+            return perAxis * perAxis;
+        }
+
         private int GetEffectiveBleedSamples()
         {
             int ceiling = qualityTier == QualityTier.Low ? 3 : qualityTier == QualityTier.Balanced ? 6 : 8;
@@ -1051,7 +1160,9 @@ namespace CrowFX
 
         private bool IsThresholdCurveActive()
         {
-            if (thresholdCurve == null) return false;
+            // An empty curve evaluates to zero at every input. Treating that as an authored
+            // remap schedules the palette pass with an all-black lookup and crushes the frame.
+            if (thresholdCurve == null || thresholdCurve.length == 0) return false;
 
             const int samples = 12;
             for (int i = 0; i <= samples; i++)
@@ -1309,7 +1420,24 @@ namespace CrowFX
             m.SetFloat(ShaderProps.EdgeUseNormals, edgeUseNormals ? 1f : 0f);
             m.SetFloat(ShaderProps.EdgeNormalThreshold, edgeNormalThreshold);
 
-            SetVirtualGridParams(m);
+            // Edge Outline runs after Lens & Sensor, but depth and normals remain in the camera's
+            // original screen space. Publish the same lens mapping so every outline kernel tap can
+            // be transformed back to the scene buffers before it is sampled.
+            bool lensWarpActive = lensSensorEnabled
+                && lensSensorIntensity > 0.0001f
+                && (Mathf.Abs(lensDistortion) > 0.000001f || sensorRollingShutter > 0.000001f);
+            Vector4 lensWarp = BuildLensWarpParamC(src);
+            m.SetFloat(ShaderProps.LensWarpEnabled, lensWarpActive ? 1f : 0f);
+            m.SetFloat(ShaderProps.LensWarpIntensity, lensSensorIntensity);
+            m.SetFloat(ShaderProps.LensDistortion, lensDistortion);
+            m.SetFloat(ShaderProps.LensRollingShutter, sensorRollingShutter);
+            m.SetFloat(ShaderProps.LensOverscan, lensWarp.x);
+            m.SetFloat(ShaderProps.LensEdgeMode, lensWarp.y);
+
+            // Pixel size as well as the grid: the sampling stage has already quantized the image
+            // to cells, and the outline has to be detected on the same lattice or it traces the
+            // true silhouette against a blocky picture and sits off the edges it belongs to.
+            SetPixelGridParams(m);
 
             Graphics.Blit(src, dst, m);
         }
@@ -1350,6 +1478,57 @@ namespace CrowFX
             Graphics.Blit(baseTex, dst, m);
         }
 
+        /// <summary>Largest normalized source coordinate the lens mapping reaches anywhere on the
+        /// frame border, which is the factor the image must be magnified by for the distorted
+        /// result to still cover the output. This mirrors the radial mapping in LensSensor() in
+        /// CE_ProfessionalEffects; if that mapping changes, this has to change with it.
+        ///
+        /// Solved here rather than in the shader because it depends only on uniforms, and because
+        /// the extremum is a property of the whole border rather than of any single pixel.</summary>
+        private static float ComputeLensOverscan(float distortion, float aspect)
+        {
+            // The mapping only pushes samples outward for pincushion; barrel pulls them in.
+            if (distortion >= 0f) return 1f;
+
+            const int samples = 64;
+            float cornerRadius = Mathf.Sqrt(aspect * aspect + 1f);
+            float maxExtent = 1f;
+
+            for (int i = 0; i < samples; i++)
+            {
+                // Walk the destination frame border in normalized -1..1 space.
+                float t = i / (float)samples * 4f;
+                Vector2 p;
+                if (t < 1f) p = new Vector2(Mathf.Lerp(-1f, 1f, t), -1f);
+                else if (t < 2f) p = new Vector2(1f, Mathf.Lerp(-1f, 1f, t - 1f));
+                else if (t < 3f) p = new Vector2(Mathf.Lerp(1f, -1f, t - 2f), 1f);
+                else p = new Vector2(-1f, Mathf.Lerp(1f, -1f, t - 3f));
+
+                var lensP = new Vector2(p.x * aspect, p.y);
+                float radius01 = Mathf.Clamp01(lensP.magnitude / Mathf.Max(cornerRadius, 1e-4f));
+                float radialScale = Mathf.Max(0.25f, 1f - distortion * 1.10f * (1f - radius01 * radius01));
+                lensP *= radialScale;
+
+                maxExtent = Mathf.Max(maxExtent,
+                    Mathf.Max(Mathf.Abs(lensP.x / aspect), Mathf.Abs(lensP.y)));
+            }
+
+            return maxExtent;
+        }
+
+        private Vector4 BuildLensWarpParamC(RenderTexture source)
+        {
+            // LensSensor() scales distortion by stage intensity, so every consumer of the
+            // mapping must solve overscan from that same effective distortion.
+            float aspect = source != null && source.height > 0
+                ? source.width / (float)source.height
+                : 16f / 9f;
+            float overscan = lensEdgeMode == LensEdgeMode.Overscan
+                ? ComputeLensOverscan(lensDistortion * Mathf.Clamp01(lensSensorIntensity), aspect)
+                : 1f;
+            return new Vector4(overscan, (float)lensEdgeMode, 0f, 0f);
+        }
+
         private void RunProfessional(RenderTexture src, RenderTexture dst, ProfessionalMode mode)
         {
             var m = MProfessional;
@@ -1358,18 +1537,26 @@ namespace CrowFX
             float intensity = 0f;
             Vector4 a = Vector4.zero;
             Vector4 b = Vector4.zero;
+            // One material is reused for every mode, so this is assigned unconditionally
+            // below and must be reset here or a previous mode's values leak into the next.
+            Vector4 c = Vector4.zero;
 
             switch (mode)
             {
                 case ProfessionalMode.LensSensor:
+                {
                     intensity = lensSensorIntensity;
                     a = new Vector4(lensDistortion, lensChromaticAberration, lensVignette, lensBloom);
                     b = new Vector4(sensorRollingShutter, sensorNoise, sensorDeadPixels, lensBloomRadius);
+
+                    c = BuildLensWarpParamC(src);
                     break;
+                }
                 case ProfessionalMode.Film:
                     intensity = filmIntensity;
                     a = new Vector4(filmGrain, filmGrainSize, filmHalation, filmHalationRadius);
                     b = new Vector4(filmGateWeave, filmDust, filmScratches, filmFlicker);
+                    c = new Vector4(filmDustOpacity, filmDustPolarity, 0f, 0f);
                     break;
                 case ProfessionalMode.MotionGlitch:
                     intensity = motionGlitchIntensity;
@@ -1395,19 +1582,21 @@ namespace CrowFX
 
             m.SetFloat(ShaderProps.ProfessionalMode, (float)mode);
             m.SetFloat(ShaderProps.EffectIntensity, intensity);
+            m.SetFloat(ShaderProps.DisplaySignalDomain, displaySignalDomain ? 1f : 0f);
             m.SetVector(ShaderProps.ParamA, a);
             m.SetVector(ShaderProps.ParamB, b);
+            m.SetVector(ShaderProps.ParamC, c);
             m.SetTexture(ShaderProps.HistoryTex, _motionHistorySeeded && _motionHistoryTex != null ? _motionHistoryTex : src);
             Graphics.Blit(src, dst, m);
         }
 
-        private void RunPresent(RenderTexture originalSrc, RenderTexture processed, RenderTexture dst)
+        private void RunPresent(RenderTexture originalSrc, RenderTexture processed, RenderTexture dst, float blend)
         {
             var m = MPresent;
             if (!m) { Graphics.Blit(processed, dst); return; }
 
             m.SetTexture(ShaderProps.OriginalTex, originalSrc);
-            m.SetFloat(ShaderProps.MasterBlend, masterBlend);
+            m.SetFloat(ShaderProps.MasterBlend, blend);
 
             Graphics.Blit(processed, dst, m);
         }
@@ -1416,11 +1605,22 @@ namespace CrowFX
         {
             if (_analogSettingsVersion >= CurrentAnalogSettingsVersion) return;
 
-            // Migrate the weak v1.2 CRT defaults without overwriting an authored setup.
-            if (Mathf.Approximately(crtScanlineStrength, 0.45f) && Mathf.Approximately(crtBeamWidth, 0.7f))
+            if (_analogSettingsVersion < 1)
             {
-                crtScanlineStrength = 0.75f;
-                crtBeamWidth = 0.5f;
+                // Migrate the weak v1.2 CRT defaults without overwriting an authored setup.
+                if (Mathf.Approximately(crtScanlineStrength, 0.45f) && Mathf.Approximately(crtBeamWidth, 0.7f))
+                {
+                    crtScanlineStrength = 0.75f;
+                    crtBeamWidth = 0.5f;
+                }
+            }
+
+            if (_analogSettingsVersion < 2)
+            {
+                // Components authored before signal-domain display simulation keep the
+                // response they were tuned against. New setups get the correct behavior
+                // from the field default instead.
+                displaySignalDomain = false;
             }
 
             _analogSettingsVersion = CurrentAnalogSettingsVersion;
@@ -1453,6 +1653,7 @@ namespace CrowFX
             m.SetFloat(ShaderProps.CrtBlackLevel, crtBlackLevel);
             m.SetFloat(ShaderProps.CrtHumBar, crtHumBar);
             m.SetFloat(ShaderProps.CrtFlickerHz, crtFlickerHz);
+            m.SetFloat(ShaderProps.DisplaySignalDomain, displaySignalDomain ? 1f : 0f);
             Graphics.Blit(src, dst, m);
         }
 
@@ -1523,11 +1724,11 @@ namespace CrowFX
             for (int i = 0; i < n; i++)
             {
                 _ghostRing[i] = CreateGhostRT(ghostDesc);
-                Graphics.Blit(Texture2D.blackTexture, _ghostRing[i]);
+                ClearRenderTexture(_ghostRing[i]);
             }
 
             _ghostCompositeTex = CreateGhostRT(ghostDesc);
-            Graphics.Blit(Texture2D.blackTexture, _ghostCompositeTex);
+            ClearRenderTexture(_ghostCompositeTex);
 
             _ghostWriteIndex = 0;
             _ghostCaptureElapsed = 0f;
@@ -1552,7 +1753,7 @@ namespace CrowFX
             SafeReleaseAndDestroyRT(ref _motionHistoryTex);
             var desc = BuildGhostDescriptor(src, w, h);
             _motionHistoryTex = CreateGhostRT(desc);
-            Graphics.Blit(Texture2D.blackTexture, _motionHistoryTex);
+            ClearRenderTexture(_motionHistoryTex);
             _motionHistorySeeded = false;
             _motionHistoryNextCaptureTime = 0f;
         }
@@ -1586,6 +1787,26 @@ namespace CrowFX
                 desc.colorFormat = RenderTextureFormat.ARGBHalf;
 
             return desc;
+        }
+
+        /// <summary>Clears every slice of a render target. Under single-pass instanced stereo the
+        /// history buffers are two-slice texture arrays, and blitting a plain 2D black texture into
+        /// one only fills slice 0, leaving the right eye's history full of whatever was in memory.
+        /// A depth slice of -1 binds all slices at once.</summary>
+        private static void ClearRenderTexture(RenderTexture rt)
+        {
+            if (rt == null) return;
+
+            var previous = RenderTexture.active;
+            try
+            {
+                Graphics.SetRenderTarget(rt, 0, CubemapFace.Unknown, -1);
+                GL.Clear(false, true, Color.clear);
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+            }
         }
 
         private static RenderTexture CreateGhostRT(RenderTextureDescriptor desc)
@@ -1626,12 +1847,12 @@ namespace CrowFX
         {
             if (!_ghostSeeded || !ghostEnabled || ghostBlend <= 0f || _ghostRing == null || _ghostRing.Length == 0 || _ghostCompositeTex == null)
             {
-                if (_ghostCompositeTex != null) Graphics.Blit(Texture2D.blackTexture, _ghostCompositeTex);
+                if (_ghostCompositeTex != null) ClearRenderTexture(_ghostCompositeTex);
                 return;
             }
 
             var m = MGhostComposite;
-            if (!m) { Graphics.Blit(Texture2D.blackTexture, _ghostCompositeTex); return; }
+            if (!m) { ClearRenderTexture(_ghostCompositeTex); return; }
 
             int n = _ghostRing.Length;
             int start = Mathf.Clamp(ghostStartDelay, 0, n - 1);
@@ -1693,8 +1914,64 @@ namespace CrowFX
             return x;
         }
 
+        /// <summary>Scene-buffer availability for the pipeline currently driving rendering.
+        /// Depth is universal; normals and motion vectors are not.</summary>
+        public enum SceneBufferSupport { BuiltIn = 0, Universal = 1, Unsupported = 2 }
+
+        private static bool _sceneBufferWarningIssued;
+        private static Type _cachedPipelineType;
+        private static SceneBufferSupport _cachedSceneBufferSupport = SceneBufferSupport.BuiltIn;
+
+        /// <summary>Reports which scene buffers the active render pipeline exposes to CrowFX.
+        /// Stages that need normals or motion vectors degrade to depth-only behavior on
+        /// pipelines that do not publish them under a name CrowFX can read.
+        /// Resolved once per pipeline type; this runs on the per-frame render path.</summary>
+        public static SceneBufferSupport GetSceneBufferSupport()
+        {
+            var pipeline = GraphicsSettings.currentRenderPipeline;
+            Type pipelineType = pipeline != null ? pipeline.GetType() : null;
+
+            if (pipelineType == _cachedPipelineType) return _cachedSceneBufferSupport;
+            _cachedPipelineType = pipelineType;
+
+            if (pipelineType == null)
+            {
+                _cachedSceneBufferSupport = SceneBufferSupport.BuiltIn;
+            }
+            else
+            {
+                // Matched by type name so the runtime assembly keeps no SRP package reference.
+                string typeName = pipelineType.FullName ?? string.Empty;
+                _cachedSceneBufferSupport = typeName.Contains("Universal")
+                    ? SceneBufferSupport.Universal
+                    : SceneBufferSupport.Unsupported;
+            }
+
+            return _cachedSceneBufferSupport;
+        }
+
+        private void PublishSceneBufferMode()
+        {
+            var support = GetSceneBufferSupport();
+            Shader.SetGlobalFloat(ShaderProps.SceneBufferMode, (float)support);
+
+            if (support != SceneBufferSupport.Unsupported || _sceneBufferWarningIssued) return;
+
+            bool needsNormals = edgeEnabled && edgeUseNormals;
+            if (!needsNormals && !motionGlitchEnabled) return;
+
+            _sceneBufferWarningIssued = true;
+            Debug.LogWarning(
+                "CrowFX: the active render pipeline does not expose a normal or motion-vector " +
+                "buffer CrowFX can read. Edge Outline falls back to depth-only detection and " +
+                "Motion & Datamosh falls back to its deterministic codec vectors. Both stages " +
+                "are fully supported on the Built-in Render Pipeline.", this);
+        }
+
         private void EnsureDepthModeIfNeeded()
         {
+            PublishSceneBufferMode();
+
             var cam = GetComponent<Camera>();
             if (!cam) return;
             if (useDepthMask || edgeEnabled) cam.depthTextureMode |= DepthTextureMode.Depth;

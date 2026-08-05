@@ -2,6 +2,42 @@
 
 All notable changes to CrowFX are documented in this file.
 
+## [Unreleased]
+
+## [2.1.0] - 2026-08-04
+
+### Added
+
+- Live inspector previews that run each stage's real shader over a test chart, so every control moves the image and time-based stages animate
+- Multi-object editing across selected cameras, covering field edits, reset, randomize, paste, and look and profile application
+- Single-pass instanced stereo support so every stage samples the correct eye slice instead of showing the left eye in both, implemented against Unity's stereo macros but untested on a headset
+- Box sampling filter that averages the source texels each destination cell covers, removing the shimmer point-sampled pixelation produces
+- All Looks view, look bookmarking, and preset removal in the Look Library
+- Uncovered Edges, Dust Opacity, Bright/Dark Balance, and Display Signal Domain controls
+
+### Changed
+
+- URP and HDRP are now labelled experimental rather than supported; both adapters will be rebuilt on command buffers and RTHandle operations
+- CRT and LCD simulation runs in the gamma-encoded signal domain, making their response noticeably stronger in Linear color-space projects
+- Rebuilt film dust as sparse hard-edged particles at varied size, rotation, and elongation instead of a soft fixed-size dot lattice
+- Stage shaders derive resolution from the render target rather than `_ScreenParams`, so pattern pitch survives render scale and off-screen cameras
+- Compacted the Look Library to single-line rows, derived each recipe from its own settings, renamed look saving to bookmarking, and widened bookmarks to span every category
+- Reworked inspector presentation with collapsible previews, per-section help buttons that are hidden by default, amber and red hints for warnings and errors, a tinted panel for global actions, and capitals in place of faked bold
+- Build validation reports strippable shaders and points at Project Settings instead of offering a tool to register them
+
+### Fixed
+
+- Solo left seven sections rendering while everything else was muted, collapsed the sections it did mute, and kept the controls hidden on a section that was switched off when soloed
+- Switched-off sections still drew any control their body reads without drawing, such as Edge Outline's thickness and normal-detection settings
+- Edge Outline detected edges at full resolution after the sampling stage had already quantized the image to cells, so outlines sat off the blocky edges they belonged to
+- Edge Outline, Depth Mask, and Motion & Datamosh read depth, normal, and motion buffers without correcting for the flipped blit projection, and sampled buffers that URP and HDRP never bind
+- Lens distortion left the undistorted frame visible in a band around the warped image, and film dust translated diagonally instead of being redrawn each frame
+- The summary pill rows wrapped against a view width that differs between the layout and repaint passes, aborting the repaint with a control-count mismatch
+- Starting a look preview inserted its status line above the Preview button, pushing Stop Preview out from under the cursor that had just pressed it
+- An authored look and a custom asset look could appear selected at the same time, and Lens & Sensor, Digital Video, and Motion & Datamosh showed no header status dot
+- The HDRP volume component wrote its intensity into the serialized masterBlend field during rendering
+- An AnimationCurve with no keyframes was treated as an authored tone remap and crushed the frame to black
+
 ## [2.0.1] - 2026-08-03
 
 ### Added

@@ -21,9 +21,17 @@ namespace CrowFX.EditorTools
             public static readonly Color DividerColor      = new Color(1f, 1f, 1f, 0.06f);
             public static readonly Color TextPrimary       = new Color(1f, 1f, 1f, 0.86f);
             public static readonly Color TextSecondary     = new Color(1f, 1f, 1f, 0.70f);
+            // Warning and Error used to be white at 6.5% and 8.5% alpha: a two percent difference,
+            // uncoloured, on panels that were otherwise identical to a plain note. The two states
+            // that most need to interrupt you were the two hardest to find. They are now tinted
+            // and carry an accent rail, so severity reads before the text does.
             public static readonly Color HintBackground    = new Color(0f, 0f, 0f, 0.30f);
-            public static readonly Color WarningBackground = new Color(1f, 1f, 1f, 0.065f);
-            public static readonly Color ErrorBackground   = new Color(1f, 1f, 1f, 0.085f);
+            public static readonly Color WarningBackground = new Color(0.85f, 0.55f, 0.12f, 0.13f);
+            public static readonly Color ErrorBackground   = new Color(0.90f, 0.25f, 0.20f, 0.15f);
+
+            public static readonly Color HintRail          = new Color(1f, 1f, 1f, 0.16f);
+            public static readonly Color WarningRail       = new Color(1f, 0.72f, 0.20f, 0.95f);
+            public static readonly Color ErrorRail         = new Color(1f, 0.40f, 0.34f, 0.95f);
 
             public static readonly Color ButtonNormal      = new Color(1f, 1f, 1f, 0.055f);
             public static readonly Color ButtonHover       = new Color(1f, 1f, 1f, 0.085f);
@@ -131,10 +139,13 @@ namespace CrowFX.EditorTools
                     normal    = { textColor = Color.white }
                 };
 
+                // Rich text is off everywhere. Nothing emits tags any more, and these styles
+                // display look names, descriptions and hints that come from user-authored
+                // assets - a stray '<' in one of those would otherwise be swallowed as markup.
                 HeaderHint = new GUIStyle(EditorStyles.miniLabel)
                 {
                     alignment = TextAnchor.MiddleRight,
-                    richText  = true,
+                    richText  = false,
                     normal    = { textColor = Theme.TextSecondary }
                 };
 
@@ -145,23 +156,28 @@ namespace CrowFX.EditorTools
                     clipping = TextClipping.Clip
                 };
 
-                SectionTitle = new GUIStyle(EditorStyles.boldLabel)
+                // Deliberately not derived from boldLabel. ApplyFont assigns the packaged
+                // JetBrains Mono Thin here, which has no bold face, so Unity would synthesize
+                // faux-bold by smearing the glyphs. Titles are emphasised with capitals and
+                // size instead, which a single-weight font can actually render.
+                SectionTitle = new GUIStyle(EditorStyles.label)
                 {
                     fontSize  = 13,
+                    fontStyle = FontStyle.Normal,
                     alignment = TextAnchor.MiddleLeft,
                     normal    = { textColor = Color.white }
                 };
 
                 SummaryText = new GUIStyle(EditorStyles.miniLabel)
                 {
-                    richText = true,
+                    richText = false,
                     normal   = { textColor = Theme.TextPrimary }
                 };
 
                 HintText = new GUIStyle(EditorStyles.miniLabel)
                 {
                     wordWrap = true,
-                    richText = true,
+                    richText = false,
                     normal   = { textColor = Theme.TextPrimary }
                 };
 
@@ -275,6 +291,31 @@ namespace CrowFX.EditorTools
         internal static IDisposable PanelScope()
             => new EditorGUILayout.VerticalScope(Styles.Panel);
 
+        /// <summary>Panel with a coloured wash and left accent rail, for control groups that need to
+        /// read as a distinct block instead of dissolving into the surrounding panel background.</summary>
+        internal sealed class AccentPanelScope : IDisposable
+        {
+            private readonly EditorGUILayout.VerticalScope _scope;
+
+            public AccentPanelScope(Color tint)
+            {
+                _scope = new EditorGUILayout.VerticalScope(Styles.Panel);
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    var rect = _scope.rect;
+                    EditorGUI.DrawRect(rect, tint);
+                    EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3f, rect.height),
+                        new Color(tint.r, tint.g, tint.b, Mathf.Min(1f, tint.a * 3.2f)));
+                    Theme.DrawBorder(rect);
+                }
+            }
+
+            public void Dispose() => _scope.Dispose();
+        }
+
+        internal static IDisposable AccentPanel(Color tint) => new AccentPanelScope(tint);
+
         internal static void Divider(float padding = 2f)
             => Theme.DrawDivider(padding);
 
@@ -321,36 +362,95 @@ namespace CrowFX.EditorTools
         // =============================================================================================
         // HINT BOX
         // =============================================================================================
+        /// <summary>When false, informational hints are suppressed. Warnings and errors always
+        /// draw: they report something wrong, not something worth explaining.
+        ///
+        /// Scoped by the inspector around each section's content, driven by that section's "?"
+        /// header button, and restored afterwards so hints drawn outside any section are
+        /// unaffected.</summary>
+        internal static bool ShowHelpHints = true;
+
+        // Wrapped-text height is measured against the view width, which changes by a scrollbar's
+        // width between the Layout and Repaint passes. Measuring separately in each pass reserves
+        // one height and draws another, clipping the last line. The Layout width is reused.
+        private static float _hintLayoutWidth;
+
+        private static float HintLayoutWidth(float reservedForControls)
+        {
+            if (Event.current.type == EventType.Layout || _hintLayoutWidth <= 0f)
+                _hintLayoutWidth = EditorGUIUtility.currentViewWidth;
+
+            return Mathf.Max(40f, _hintLayoutWidth - reservedForControls);
+        }
+
+        private static void HintPalette(HintType type, out Color background, out Color rail, out string icon)
+        {
+            switch (type)
+            {
+                case HintType.Warning:
+                    background = Theme.WarningBackground; rail = Theme.WarningRail;
+                    icon = "console.warnicon"; return;
+                case HintType.Error:
+                    background = Theme.ErrorBackground; rail = Theme.ErrorRail;
+                    icon = "console.erroricon"; return;
+                default:
+                    background = Theme.HintBackground; rail = Theme.HintRail;
+                    icon = null; return;
+            }
+        }
+
+        /// <summary>Draws the panel and returns the rect left for text, after the rail and icon.</summary>
+        private static Rect DrawHintFrame(Rect rect, HintType type)
+        {
+            HintPalette(type, out Color background, out Color rail, out string icon);
+
+            const float railWidth = 3f;
+            float textX = rect.x + railWidth + 6f;
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(rect, background);
+                EditorGUI.DrawRect(new Rect(rect.x, rect.y, railWidth, rect.height), rail);
+                Theme.DrawBorder(rect);
+
+                if (icon != null)
+                {
+                    var texture = IconCache.Get(icon);
+                    if (texture != null)
+                    {
+                        var iconRect = new Rect(textX, rect.y + (rect.height - 14f) * 0.5f, 14f, 14f);
+                        GUI.DrawTexture(iconRect, texture, ScaleMode.ScaleToFit);
+                    }
+                }
+            }
+
+            if (icon != null) textX += 18f;
+            return new Rect(textX, rect.y, Mathf.Max(20f, rect.xMax - textX - 6f), rect.height);
+        }
+
         internal static void Hint(string message, HintType type = HintType.Info)
         {
+            // Informational hints are documentation. Suppressing them leaves the inspector to the
+            // controls, while anything reporting a problem still gets through.
+            if (type == HintType.Info && !ShowHelpHints) return;
+
             var content = new GUIContent(message ?? "");
 
-            // currentViewWidth includes the inspector chrome and any containing panel. Keep the
-            // estimate conservative so narrow/nested inspectors reserve every wrapped line.
-            float labelWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - 64f);
-            float height = Mathf.Max(CompactControlHeight(Styles.HintText), Styles.HintText.CalcHeight(content, labelWidth) + 10f);
+            float labelWidth = HintLayoutWidth(type == HintType.Info ? 64f : 86f);
+            float height = Mathf.Max(CompactControlHeight(Styles.HintText),
+                                     Styles.HintText.CalcHeight(content, labelWidth) + 10f);
 
             var rect = GUILayoutUtility.GetRect(0f, height, GUILayout.ExpandWidth(true));
             rect.xMin += 2f;
             rect.xMax -= 2f;
 
-            Color bg = type switch
-            {
-                HintType.Warning => Theme.WarningBackground,
-                HintType.Error   => Theme.ErrorBackground,
-                _                => Theme.HintBackground
-            };
+            var textRect = DrawHintFrame(rect, type);
+            textRect.y += 3f;
+            textRect.height -= 6f;
 
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, bg);
-                Theme.DrawBorder(rect);
-            }
-
-            var labelRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, rect.height - 6f);
             var prev = GUI.contentColor;
             GUI.contentColor = Theme.TextPrimary;
-            GUI.Label(labelRect, content, Styles.HintText);
+            GUI.Label(textRect, content, Styles.HintText);
             GUI.contentColor = prev;
         }
 
@@ -358,10 +458,13 @@ namespace CrowFX.EditorTools
         {
             var content = new GUIContent(message ?? "");
 
+            // Never suppressed by ShowHelpHints. These carry a button that fixes what they
+            // describe, so they are an action the inspector is offering, not an explanation.
             float desiredActionWidth = ContentWidth(Styles.PillButton, actionLabel, actionWidth);
-            float maxActionWidth = Mathf.Max(72f, EditorGUIUtility.currentViewWidth - 112f);
+            float viewWidth = HintLayoutWidth(0f);
+            float maxActionWidth = Mathf.Max(72f, viewWidth - 112f);
             float resolvedActionWidth = Mathf.Min(desiredActionWidth, maxActionWidth);
-            float labelWidth = Mathf.Max(40f, EditorGUIUtility.currentViewWidth - resolvedActionWidth - 76f);
+            float labelWidth = Mathf.Max(40f, viewWidth - resolvedActionWidth - 96f);
             float buttonHeight = CompactControlHeight(Styles.PillButton);
             float height = Mathf.Max(buttonHeight + 8f, Styles.HintText.CalcHeight(content, labelWidth) + 12f);
 
@@ -369,21 +472,11 @@ namespace CrowFX.EditorTools
             rect.xMin += 2f;
             rect.xMax -= 2f;
 
-            Color bg = type switch
-            {
-                HintType.Warning => Theme.WarningBackground,
-                HintType.Error   => Theme.ErrorBackground,
-                _                => Theme.HintBackground
-            };
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, bg);
-                Theme.DrawBorder(rect);
-            }
+            var textRect = DrawHintFrame(rect, type);
 
             var buttonRect = new Rect(rect.xMax - resolvedActionWidth - 6f, rect.y + (rect.height - buttonHeight) * 0.5f, resolvedActionWidth, buttonHeight);
-            var labelRect = new Rect(rect.x + 6f, rect.y + 4f, Mathf.Max(40f, buttonRect.x - rect.x - 12f), rect.height - 8f);
+            var labelRect = new Rect(textRect.x, rect.y + 4f,
+                                     Mathf.Max(40f, buttonRect.x - textRect.x - 8f), rect.height - 8f);
 
             var prev = GUI.contentColor;
             GUI.contentColor = Theme.TextPrimary;

@@ -11,7 +11,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5c65c96aa54149f88440d9414ff2d54e, type: 3}
   m_Name: Camcorder90s
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   schemaVersion: 1
   sourceLookId: Camcorder90s
   displayName: 90s Camcorder
@@ -36,33 +36,34 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c3b7d4f4e934c9491d5ac6c62cb77a1, type: 3}
   m_Name: Settings
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   master:
     masterBlend: 1
     qualityTier: 1
     maskPlacement: 0
+    displaySignalDomain: 1
   sampling:
     pixelSize: 1
-    useVirtualGrid: 0
-    virtualResolution: {x: 720, y: 480}
+    useVirtualGrid: 1
+    virtualResolution: {x: 640, y: 448}
     samplingPhase: {x: 0, y: 0}
     pixelAspect: 1
     samplingFilter: 0
   pregrade:
     pregradeEnabled: 1
-    exposure: 0.025
-    contrast: 0.9784
-    gamma: 1.0254999
-    saturation: 0.8852
+    exposure: 0.055
+    contrast: 0.94240004
+    gamma: 0.9745
+    saturation: 0.836
     pregradeTint: {r: 1, g: 1, b: 1, a: 1}
-    pregradeTintStrength: 0
+    pregradeTintStrength: 0.172
     pregradeLift: {r: 0, g: 0, b: 0, a: 0}
     pregradeGain: {r: 1, g: 1, b: 1, a: 1}
     pregradeOffset: {r: 0, g: 0, b: 0, a: 0}
     pregradeTemperature: 0
     pregradeHighlightRolloff: 0.5
   posterize:
-    levels: 256
+    levels: 192
     usePerChannel: 0
     levelsR: 512
     levelsG: 512
@@ -146,9 +147,9 @@ MonoBehaviour:
     jitterHashWarpSpeed: 6
     jitterHashPerChannel: 0
   bleed:
-    bleedBlend: 0
-    bleedIntensity: 0
-    bleedMode: 0
+    bleedBlend: 0.176
+    bleedIntensity: 2.53
+    bleedMode: 1
     bleedBlendMode: 0
     shiftR: {x: -0.5, y: 0.5}
     shiftG: {x: 0.5, y: -0.5}
@@ -157,11 +158,11 @@ MonoBehaviour:
     bleedEdgeThreshold: 0.05
     bleedEdgePower: 2
     bleedRadialCenter: {x: 0.5, y: 0.5}
-    bleedRadialStrength: 1
+    bleedRadialStrength: -0.59319246
     bleedSamples: 1
     bleedSmear: 0
     bleedFalloff: 2
-    bleedIntensityR: 1
+    bleedIntensityR: 1.726
     bleedIntensityG: 1
     bleedIntensityB: 1
     bleedAnamorphic: {x: 1, y: 1}
@@ -172,7 +173,7 @@ MonoBehaviour:
     bleedWobbleScanline: 0
   ghost:
     ghostEnabled: 1
-    ghostBlend: 0.035
+    ghostBlend: 0.025
     ghostOffsetPx: {x: 0, y: 0}
     ghostFrames: 2
     ghostCaptureInterval: 0
@@ -192,13 +193,13 @@ MonoBehaviour:
     edgeUseNormals: 1
     edgeNormalThreshold: 0.18
   unsharp:
-    unsharpEnabled: 0
-    unsharpAmount: 0.425
-    unsharpRadius: 1
+    unsharpEnabled: 1
+    unsharpAmount: 2.81
+    unsharpRadius: 1.3
     unsharpThreshold: 0
     unsharpLumaOnly: 0
     unsharpChroma: 0
-    sharpenMode: 1
+    sharpenMode: 0
   dither:
     ditherMode: 0
     ditherStrength: 0
@@ -210,11 +211,12 @@ MonoBehaviour:
     halftoneScale: 6
     halftoneDotGain: 0
     halftoneAreaModulation: 0
+    halftoneColorMode: 0
   crt:
-    crtEnabled: 0
+    crtEnabled: 1
     crtCurvature: 0.08
-    crtOverscan: 1.02
-    crtScanlineStrength: 0.645
+    crtOverscan: 1.09
+    crtScanlineStrength: 0
     crtScanlineCount: 240
     crtBeamWidth: 0.5
     crtMaskMode: 0
@@ -224,7 +226,7 @@ MonoBehaviour:
     crtBloomRadius: 1.5
     crtVignette: 0.27299997
     crtVignetteSoftness: 0.18
-    crtNoise: 0.015
+    crtNoise: 0
     crtFlicker: 0.015
     crtBrightness: 1.13
     crtTubeEdge: 1
@@ -236,36 +238,37 @@ MonoBehaviour:
     crtFlickerHz: 60
   vhs:
     vhsEnabled: 1
-    vhsIntensity: 0.5
+    vhsIntensity: 0.44
     vhsTapeSpeed: 1
-    vhsHorizontalJitter: 0.75
-    vhsLineWobble: 1.3
-    vhsTracking: 0.06
+    vhsHorizontalJitter: 0.55
+    vhsLineWobble: 1.05
+    vhsTracking: 0.165
     vhsTrackingSpeed: 0.65
     vhsTrackingWidth: 0.055
-    vhsChromaBleed: 2.6
-    vhsChromaBlur: 3.4
-    vhsColorLoss: 0.12
-    vhsLumaNoise: 0.0287
-    vhsChromaNoise: 0.0123
-    vhsDropout: 0.045
-    vhsHeadSwitching: 0.1
+    vhsChromaBleed: 2.2
+    vhsChromaBlur: 3
+    vhsColorLoss: 0.416
+    vhsLumaNoise: 0.042
+    vhsChromaNoise: 0.044
+    vhsDropout: 0.01
+    vhsHeadSwitching: 0.07
     vhsHeadSwitchHeight: 0.045
-    vhsInterlace: 0.12
+    vhsInterlace: 0.285
     vhsStandard: 0
     vhsTapeMode: 0
-    vhsGeneration: 0
-    vhsAgcInstability: 0.08
+    vhsGeneration: 1
+    vhsAgcInstability: 0.157
     vhsVerticalChromaBlur: 1
   professional:
     lensSensorEnabled: 1
-    lensSensorIntensity: 0.42
+    lensSensorIntensity: 0.34
     lensDistortion: 0.012
     lensChromaticAberration: 0.45
+    lensEdgeMode: 0
     lensVignette: 0.08
     lensBloom: 0.0492
     lensBloomRadius: 2
-    sensorRollingShutter: 2
+    sensorRollingShutter: 0.8
     sensorNoise: 0.022
     sensorDeadPixels: 0.02
     filmEnabled: 0
@@ -278,6 +281,8 @@ MonoBehaviour:
     filmDust: 0
     filmScratches: 0
     filmFlicker: 0.01
+    filmDustOpacity: 1
+    filmDustPolarity: 0.72
     motionGlitchEnabled: 0
     motionGlitchIntensity: 0.48000002
     motionBlockSize: 32
@@ -295,13 +300,13 @@ MonoBehaviour:
     digitalMosquitoNoise: 0.05
     digitalBitratePumping: 0
     compositeEnabled: 1
-    compositeIntensity: 0.2112
+    compositeIntensity: 0.1408
     compositeStandard: 0
-    compositeDotCrawl: 0.35
-    compositeRainbow: 0.2
-    compositeChromaBandwidth: 0.42
-    compositePhaseError: 0.18
-    compositeCombFilter: 0.45
+    compositeDotCrawl: 0.14
+    compositeRainbow: 0.07
+    compositeChromaBandwidth: 0.7
+    compositePhaseError: 0.05
+    compositeCombFilter: 0.8
     lcdEnabled: 0
     lcdIntensity: 0.736
     lcdPixelScale: 2

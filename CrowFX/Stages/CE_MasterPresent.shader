@@ -16,18 +16,21 @@ Shader "Hidden/CrowFX/Stages/MasterPresent"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "CE_Stereo.cginc"
 
-            sampler2D _MainTex;      // processed (comes from Blit source)
-            sampler2D _OriginalTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)      // processed (comes from Blit source)
+            CROWFX_DECLARE_SCREEN_TEX(_OriginalTex)
             float _MasterBlend;
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
-                float4 processed = tex2D(_MainTex, i.uv);
-                float4 original  = tex2D(_OriginalTex, i.uv);
+                CROWFX_SETUP_STEREO(i);
+                float4 processed = CROWFX_SAMPLE_SCREEN(_MainTex, i.uv);
+                float4 original  = CROWFX_SAMPLE_SCREEN(_OriginalTex, i.uv);
 
                 float3 outc = lerp(original.rgb, processed.rgb, saturate(_MasterBlend));
                 return float4(outc, original.a);

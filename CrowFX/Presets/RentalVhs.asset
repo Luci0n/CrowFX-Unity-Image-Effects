@@ -11,18 +11,19 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c3b7d4f4e934c9491d5ac6c62cb77a1, type: 3}
   m_Name: Settings
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   master:
     masterBlend: 1
     qualityTier: 1
     maskPlacement: 0
+    displaySignalDomain: 1
   sampling:
     pixelSize: 1
-    useVirtualGrid: 0
-    virtualResolution: {x: 720, y: 480}
+    useVirtualGrid: 1
+    virtualResolution: {x: 320, y: 240}
     samplingPhase: {x: 0, y: 0}
     pixelAspect: 1
-    samplingFilter: 0
+    samplingFilter: 2
   pregrade:
     pregradeEnabled: 1
     exposure: -0.035
@@ -213,9 +214,9 @@ MonoBehaviour:
   vhs:
     vhsEnabled: 1
     vhsIntensity: 0.62
-    vhsTapeSpeed: 1
+    vhsTapeSpeed: 1.32
     vhsHorizontalJitter: 1.55
-    vhsLineWobble: 2.6
+    vhsLineWobble: 0.93
     vhsTracking: 0.18
     vhsTrackingSpeed: 0.85
     vhsTrackingWidth: 0.075
@@ -224,10 +225,10 @@ MonoBehaviour:
     vhsColorLoss: 0.36
     vhsLumaNoise: 0.0451
     vhsChromaNoise: 0.0205
-    vhsDropout: 0.18
+    vhsDropout: 0.073
     vhsHeadSwitching: 0.2
     vhsHeadSwitchHeight: 0.055
-    vhsInterlace: 0.18
+    vhsInterlace: 0.121
     vhsStandard: 0
     vhsTapeMode: 1
     vhsGeneration: 3
@@ -238,6 +239,7 @@ MonoBehaviour:
     lensSensorIntensity: 1
     lensDistortion: 0
     lensChromaticAberration: 0
+    lensEdgeMode: 0
     lensVignette: 0
     lensBloom: 0
     lensBloomRadius: 2
@@ -254,6 +256,8 @@ MonoBehaviour:
     filmDust: 0
     filmScratches: 0
     filmFlicker: 0.01
+    filmDustOpacity: 1
+    filmDustPolarity: 0.72
     motionGlitchEnabled: 0
     motionGlitchIntensity: 0.48000002
     motionBlockSize: 32
@@ -297,7 +301,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5c65c96aa54149f88440d9414ff2d54e, type: 3}
   m_Name: RentalVhs
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   schemaVersion: 1
   sourceLookId: RentalVhs
   displayName: Rental VHS

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace CrowFX
@@ -10,6 +11,8 @@ namespace CrowFX
         [Range(0f, 1f)] public float masterBlend = 1f;
         public CrowImageEffects.QualityTier qualityTier = CrowImageEffects.QualityTier.Balanced;
         public CrowImageEffects.MaskPlacement maskPlacement = CrowImageEffects.MaskPlacement.EntireStack;
+        [Tooltip("Runs CRT and LCD panel simulation on the gamma-encoded signal, matching the tape and composite stages. Profiles saved before CrowFX 2.1 have no stored value and adopt this default, so their CRT and LCD response becomes stronger in Linear color-space projects.")]
+        public bool displaySignalDomain = true;
     }
 
     [Serializable]
@@ -373,12 +376,14 @@ namespace CrowFX
     {
         public bool lensSensorEnabled; [Range(0f,1f)] public float lensSensorIntensity = 1f;
         [Range(-0.5f,0.5f)] public float lensDistortion; [Range(0f,8f)] public float lensChromaticAberration;
+        public CrowImageEffects.LensEdgeMode lensEdgeMode = CrowImageEffects.LensEdgeMode.Overscan;
         [Range(0f,1f)] public float lensVignette; [Range(0f,2f)] public float lensBloom; [Range(0.5f,8f)] public float lensBloomRadius = 2f;
         [Range(0f,12f)] public float sensorRollingShutter; [Range(0f,0.25f)] public float sensorNoise; [Range(0f,1f)] public float sensorDeadPixels;
 
         public bool filmEnabled; [Range(0f,1f)] public float filmIntensity = 1f; [Range(0f,0.5f)] public float filmGrain = 0.08f;
         [Range(0.5f,4f)] public float filmGrainSize = 1f; [Range(0f,2f)] public float filmHalation = 0.15f; [Range(0.5f,8f)] public float filmHalationRadius = 2f;
         [Range(0f,6f)] public float filmGateWeave = 0.25f; [Range(0f,1f)] public float filmDust; [Range(0f,1f)] public float filmScratches; [Range(0f,0.2f)] public float filmFlicker = 0.01f;
+        [Range(0f,1f)] public float filmDustOpacity = 1f; [Range(0f,1f)] public float filmDustPolarity = 0.72f;
 
         public bool motionGlitchEnabled; [Range(0f,1f)] public float motionGlitchIntensity = 0.6f; [Range(4f,128f)] public float motionBlockSize = 32f;
         [Range(0f,8f)] public float motionVectorDisplacement = 2f; [Range(0f,1f)] public float motionFreezeRate = 0.1f; [Range(0f,8f)] public float motionColorSplit;
@@ -440,6 +445,7 @@ namespace CrowFX
             fx.masterBlend = master.masterBlend;
             fx.qualityTier = master.qualityTier;
             fx.maskPlacement = master.maskPlacement;
+            fx.displaySignalDomain = master.displaySignalDomain;
             fx.pixelSize = sampling.pixelSize;
             fx.useVirtualGrid = sampling.useVirtualGrid;
             fx.virtualResolution = sampling.virtualResolution;
@@ -631,6 +637,7 @@ namespace CrowFX
             master.masterBlend = fx.masterBlend;
             master.qualityTier = fx.qualityTier;
             master.maskPlacement = fx.maskPlacement;
+            master.displaySignalDomain = fx.displaySignalDomain;
             sampling.pixelSize = fx.pixelSize;
             sampling.useVirtualGrid = fx.useVirtualGrid;
             sampling.virtualResolution = fx.virtualResolution;
@@ -818,10 +825,12 @@ namespace CrowFX
         {
             if (p == null) return;
             fx.lensSensorEnabled=p.lensSensorEnabled; fx.lensSensorIntensity=p.lensSensorIntensity; fx.lensDistortion=p.lensDistortion;
+            fx.lensEdgeMode=p.lensEdgeMode;
             fx.lensChromaticAberration=p.lensChromaticAberration; fx.lensVignette=p.lensVignette; fx.lensBloom=p.lensBloom; fx.lensBloomRadius=p.lensBloomRadius;
             fx.sensorRollingShutter=p.sensorRollingShutter; fx.sensorNoise=p.sensorNoise; fx.sensorDeadPixels=p.sensorDeadPixels;
             fx.filmEnabled=p.filmEnabled; fx.filmIntensity=p.filmIntensity; fx.filmGrain=p.filmGrain; fx.filmGrainSize=p.filmGrainSize;
             fx.filmHalation=p.filmHalation; fx.filmHalationRadius=p.filmHalationRadius; fx.filmGateWeave=p.filmGateWeave; fx.filmDust=p.filmDust;
+            fx.filmDustOpacity=p.filmDustOpacity; fx.filmDustPolarity=p.filmDustPolarity;
             fx.filmScratches=p.filmScratches; fx.filmFlicker=p.filmFlicker;
             fx.motionGlitchEnabled=p.motionGlitchEnabled; fx.motionGlitchIntensity=p.motionGlitchIntensity; fx.motionBlockSize=p.motionBlockSize;
             fx.motionVectorDisplacement=p.motionVectorDisplacement; fx.motionFreezeRate=p.motionFreezeRate; fx.motionColorSplit=p.motionColorSplit; fx.motionHistoryScale=p.motionHistoryScale; fx.motionHistoryFps=p.motionHistoryFps;
@@ -839,10 +848,12 @@ namespace CrowFX
         {
             if (p == null) return;
             p.lensSensorEnabled=fx.lensSensorEnabled; p.lensSensorIntensity=fx.lensSensorIntensity; p.lensDistortion=fx.lensDistortion;
+            p.lensEdgeMode=fx.lensEdgeMode;
             p.lensChromaticAberration=fx.lensChromaticAberration; p.lensVignette=fx.lensVignette; p.lensBloom=fx.lensBloom; p.lensBloomRadius=fx.lensBloomRadius;
             p.sensorRollingShutter=fx.sensorRollingShutter; p.sensorNoise=fx.sensorNoise; p.sensorDeadPixels=fx.sensorDeadPixels;
             p.filmEnabled=fx.filmEnabled; p.filmIntensity=fx.filmIntensity; p.filmGrain=fx.filmGrain; p.filmGrainSize=fx.filmGrainSize;
             p.filmHalation=fx.filmHalation; p.filmHalationRadius=fx.filmHalationRadius; p.filmGateWeave=fx.filmGateWeave; p.filmDust=fx.filmDust;
+            p.filmDustOpacity=fx.filmDustOpacity; p.filmDustPolarity=fx.filmDustPolarity;
             p.filmScratches=fx.filmScratches; p.filmFlicker=fx.filmFlicker;
             p.motionGlitchEnabled=fx.motionGlitchEnabled; p.motionGlitchIntensity=fx.motionGlitchIntensity; p.motionBlockSize=fx.motionBlockSize;
             p.motionVectorDisplacement=fx.motionVectorDisplacement; p.motionFreezeRate=fx.motionFreezeRate; p.motionColorSplit=fx.motionColorSplit; p.motionHistoryScale=fx.motionHistoryScale; p.motionHistoryFps=fx.motionHistoryFps;
@@ -854,6 +865,86 @@ namespace CrowFX
             p.compositePhaseError=fx.compositePhaseError; p.compositeCombFilter=fx.compositeCombFilter;
             p.lcdEnabled=fx.lcdEnabled; p.lcdIntensity=fx.lcdIntensity; p.lcdPixelScale=fx.lcdPixelScale; p.lcdSubpixelStrength=fx.lcdSubpixelStrength;
             p.lcdInversion=fx.lcdInversion; p.lcdViewingAngle=fx.lcdViewingAngle; p.lcdBacklightBleed=fx.lcdBacklightBleed; p.lcdResponseSmear=fx.lcdResponseSmear;
+        }
+
+        /// <summary>Short labels for the stages this profile actually switches on, in the order
+        /// <see cref="CrowImageEffects.RenderStack"/> executes them.
+        ///
+        /// The activity tests below mirror the IsXActive predicates in CrowImageEffects: a stage
+        /// that schedules no render pass must not appear here. Deriving the list is the only way
+        /// it can stay truthful, since a hand-written recipe silently goes stale the moment a
+        /// preset is retuned.</summary>
+        public List<string> GetActiveStageLabels()
+        {
+            var stages = new List<string>(14);
+
+            if (sampling.pixelSize > 1 || sampling.useVirtualGrid) stages.Add("GRID");
+            if (pregrade.pregradeEnabled) stages.Add("GRADE");
+
+            var p = professional;
+            if (p != null && p.lensSensorEnabled && p.lensSensorIntensity > 0.0001f) stages.Add("LENS");
+            if (p != null && p.filmEnabled && p.filmIntensity > 0.0001f) stages.Add("FILM");
+
+            if (jitter.jitterEnabled && jitter.jitterStrength > 0.0001f && jitter.jitterAmountPx > 0.0001f)
+                stages.Add("JITTER");
+            if (ghost.ghostEnabled && ghost.ghostBlend > 0.0001f) stages.Add("GHOST");
+            if (bleed.bleedBlend > 0.0001f && bleed.bleedIntensity > 0.0001f) stages.Add("RGB");
+            if (unsharp.unsharpEnabled && unsharp.unsharpAmount > 0.0001f) stages.Add("DETAIL");
+            if (p != null && p.motionGlitchEnabled && p.motionGlitchIntensity > 0.0001f) stages.Add("MOTION");
+
+            // Quantization and dithering share one pass but are separate controls, so they are
+            // reported separately: a look can posterize without dithering and vice versa.
+            bool quantizes = posterize.animateLevels ||
+                (posterize.usePerChannel
+                    ? posterize.levelsR < 512 || posterize.levelsG < 512 || posterize.levelsB < 512
+                    : posterize.levels < 512);
+            if (quantizes) stages.Add("POSTERIZE");
+            if (dither.ditherMode != CrowImageEffects.DitherMode.None && dither.ditherStrength > 0.0001f)
+                stages.Add("DITHER");
+
+            if (palette.usePalette && palette.paletteTex != null) stages.Add("PALETTE");
+            else if (posterize.invert || IsThresholdCurveActive()) stages.Add("TONE");
+
+            if (edges.edgeEnabled && edges.edgeBlend > 0.0001f && edges.edgeStrength > 0.0001f)
+                stages.Add("EDGES");
+
+            if (p != null && p.digitalVideoEnabled && p.digitalVideoIntensity > 0.0001f) stages.Add("DIGITAL");
+            if (vhs.vhsEnabled && vhs.vhsIntensity > 0.0001f) stages.Add("VHS");
+            if (p != null && p.compositeEnabled && p.compositeIntensity > 0.0001f) stages.Add("COMPOSITE");
+            if (crt.crtEnabled) stages.Add("CRT");
+            if (p != null && p.lcdEnabled && p.lcdIntensity > 0.0001f) stages.Add("LCD");
+
+            if ((textureMask.useMask && textureMask.maskTex != null) || depthMask.useDepthMask)
+                stages.Add("MASK");
+
+            return stages;
+        }
+
+        /// <summary>Render-order stage list as a single display string, or "SOURCE" when the
+        /// profile activates nothing at all.</summary>
+        public string GetActiveStageSummary()
+        {
+            var stages = GetActiveStageLabels();
+            return stages.Count == 0 ? "SOURCE" : string.Join(" > ", stages);
+        }
+
+        /// <summary>Matches CrowImageEffects.IsThresholdCurveActive: a curve that is not the
+        /// identity ramp still schedules the palette pass even with palette mapping off.</summary>
+        private bool IsThresholdCurveActive()
+        {
+            var curve = palette.thresholdCurve;
+            // A curve with no keys evaluates to zero everywhere, which is not an authored
+            // remap - it is an uninitialised field, and treating it as active would both
+            // report a stage that does nothing useful and crush the image to black.
+            if (curve == null || curve.length == 0) return false;
+
+            const int samples = 12;
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = i / (float)samples;
+                if (Mathf.Abs(curve.Evaluate(t) - t) > 0.001f) return true;
+            }
+            return false;
         }
 
         private static AnimationCurve CloneCurve(AnimationCurve curve)

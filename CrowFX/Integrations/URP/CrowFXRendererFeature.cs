@@ -5,6 +5,16 @@ using UnityEngine.Rendering.Universal;
 
 namespace CrowFX.Integrations.URP
 {
+    /// <summary>
+    /// EXPERIMENTAL. CrowFX renders through immediate-mode <see cref="Graphics.Blit"/> calls, so this
+    /// pass flushes the command buffer around the stack rather than recording into it. It requires
+    /// URP 14-16 with Compatibility Mode; URP 17+ routes rendering through RenderGraph, where
+    /// <see cref="ScriptableRenderPass.Execute"/> and cameraColorTargetHandle are unavailable.
+    /// Edge Outline normals and Motion &amp; Datamosh vectors read URP's prepass buffers and require
+    /// the renderer to produce them; without a DepthNormals or motion-vector prepass both stages
+    /// degrade to depth-only behavior. Superseded once RenderStack is rebuilt on command buffers
+    /// and RTHandles with a dedicated RenderGraph path.
+    /// </summary>
     public sealed class CrowFXRendererFeature : ScriptableRendererFeature
     {
         [SerializeField] private RenderPassEvent injectionPoint = RenderPassEvent.AfterRenderingPostProcessing;

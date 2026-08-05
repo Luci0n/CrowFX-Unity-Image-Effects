@@ -11,7 +11,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5c65c96aa54149f88440d9414ff2d54e, type: 3}
   m_Name: HomeMovie
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   schemaVersion: 1
   sourceLookId: HomeMovie
   displayName: Home Movie
@@ -36,26 +36,27 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c3b7d4f4e934c9491d5ac6c62cb77a1, type: 3}
   m_Name: Settings
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   master:
     masterBlend: 1
     qualityTier: 1
     maskPlacement: 0
+    displaySignalDomain: 1
   sampling:
     pixelSize: 1
-    useVirtualGrid: 0
-    virtualResolution: {x: 720, y: 480}
+    useVirtualGrid: 1
+    virtualResolution: {x: 333, y: 480}
     samplingPhase: {x: 0, y: 0}
-    pixelAspect: 1
-    samplingFilter: 0
+    pixelAspect: 0.25
+    samplingFilter: 2
   pregrade:
     pregradeEnabled: 1
     exposure: 0.055
     contrast: 0.94240004
     gamma: 0.9745
     saturation: 0.836
-    pregradeTint: {r: 1, g: 1, b: 1, a: 1}
-    pregradeTintStrength: 0
+    pregradeTint: {r: 0.60223156, g: 0.4292453, b: 1, a: 1}
+    pregradeTintStrength: 0.172
     pregradeLift: {r: 0, g: 0, b: 0, a: 0}
     pregradeGain: {r: 1, g: 1, b: 1, a: 1}
     pregradeOffset: {r: 0, g: 0, b: 0, a: 0}
@@ -194,7 +195,7 @@ MonoBehaviour:
   unsharp:
     unsharpEnabled: 1
     unsharpAmount: 0.425
-    unsharpRadius: 2.3
+    unsharpRadius: 1.36
     unsharpThreshold: 0
     unsharpLumaOnly: 0
     unsharpChroma: 0
@@ -241,14 +242,14 @@ MonoBehaviour:
     vhsTapeSpeed: 1
     vhsHorizontalJitter: 0.55
     vhsLineWobble: 1.05
-    vhsTracking: 0.035
+    vhsTracking: 0.334
     vhsTrackingSpeed: 0.65
     vhsTrackingWidth: 0.055
     vhsChromaBleed: 2.2
     vhsChromaBlur: 3
     vhsColorLoss: 0.17
     vhsLumaNoise: 0.02132
-    vhsChromaNoise: 0.188
+    vhsChromaNoise: 0.096
     vhsDropout: 0.03
     vhsHeadSwitching: 0.07
     vhsHeadSwitchHeight: 0.045
@@ -263,6 +264,7 @@ MonoBehaviour:
     lensSensorIntensity: 0.34
     lensDistortion: 0.012
     lensChromaticAberration: 0.45
+    lensEdgeMode: 0
     lensVignette: 0.08
     lensBloom: 0.0492
     lensBloomRadius: 2
@@ -279,6 +281,8 @@ MonoBehaviour:
     filmDust: 0
     filmScratches: 0
     filmFlicker: 0.01
+    filmDustOpacity: 1
+    filmDustPolarity: 0.72
     motionGlitchEnabled: 0
     motionGlitchIntensity: 0.48000002
     motionBlockSize: 32

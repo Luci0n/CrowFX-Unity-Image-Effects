@@ -4,14 +4,14 @@
 
 <p align="center">
   <img alt="Unity 2022.3+" src="https://img.shields.io/badge/Unity-2022.3%2B-000000?logo=unity" />
-  <img alt="CrowFX 2.0.0" src="https://img.shields.io/badge/CrowFX-2.0.0-6f4ca6" />
+  <a href="https://github.com/Luci0n/CrowFX-Unity-Image-Effects/releases/latest"><img alt="Latest CrowFX release" src="https://img.shields.io/github/v/release/Luci0n/CrowFX-Unity-Image-Effects?label=CrowFX&amp;color=6f4ca6" /></a>
   <a href="https://openupm.com/packages/com.luci0n.crowfx/"><img alt="OpenUPM package version" src="https://img.shields.io/npm/v/com.luci0n.crowfx?label=OpenUPM&amp;registry_uri=https%3A%2F%2Fpackage.openupm.com" /></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
 </p>
 
 <p align="center">
   <strong>Free, open-source CRT, VHS, film, glitch, dithering, and retro post-processing for Unity.</strong><br />
-  Built for the Built-in Render Pipeline, URP, and HDRP.
+  Built for the Built-in Render Pipeline. URP and HDRP adapters are experimental.
 </p>
 
 CrowFX turns a Unity camera into a complete real-time image-effects stack. Create convincing CRT displays, VHS and composite video, film damage, PSX-style color and dithering, analog-horror footage, digital glitches, LCD artifacts, and polished cinematic looks from one searchable inspector.
@@ -37,21 +37,59 @@ CrowFX turns a Unity camera into a complete real-time image-effects stack. Creat
 - High-fidelity CRT, VHS, composite-video, film, lens, sensor, LCD, and codec simulation
 - 88 curated full-stack looks across 11 production and experimental categories
 - Dedicated preset banks for individual effect families
-- Searchable custom inspector with previews, favorites, copy/paste, solo, mute, profiles, and Undo support
+- Searchable custom inspector with favorites, copy/paste, solo, mute, profiles, and Undo support
+- Live per-section previews that run the real stage shader over a test chart, so every control moves the image and time-based stages animate
+- A `?` button in each section header reveals that section's explanatory notes, hidden by default; warnings and errors always stay visible
 - Active-stage execution: disabled effects do not add render passes
 - HDR-capable intermediate buffers with source-alpha preservation
-- Built-in Render Pipeline support plus optional URP 14+ and HDRP 14+ integrations
+- Built-in Render Pipeline support, plus experimental URP and HDRP adapters
 - Installation validation, build-time shader checks, calibration charts, and editor tests
 
 ## Compatibility
 
-| Pipeline | Support |
-|---|---|
-| Built-in Render Pipeline | `OnRenderImage` camera component |
-| Universal Render Pipeline 14+ | `CrowFXRendererFeature` |
-| High Definition Render Pipeline 14+ | `CrowFXCustomPostProcess` |
+| Pipeline | Status | Entry point |
+|---|---|---|
+| Built-in Render Pipeline | **Supported** | `OnRenderImage` camera component |
+| Universal Render Pipeline 14–16 | **Experimental** | `CrowFXRendererFeature` |
+| High Definition Render Pipeline 14+ | **Experimental** | `CrowFXCustomPostProcess` |
 
 Unity 2022.3 LTS or newer is recommended.
+
+### XR
+
+Multi-pass stereo works without any special handling: Unity renders each eye separately and hands
+the stage an ordinary texture. Single-pass instanced renders both eyes into one texture array, and
+every stage now samples the correct slice through Unity's screen-space texture macros, which
+compile back to plain 2D sampling when stereo is off.
+
+Single-pass instanced support is **untested on hardware** — it is implemented against Unity's
+documented stereo macros but has not been run on a headset. Report anything that renders one eye
+into both, or renders only to one eye.
+
+### What "experimental" means here
+
+CrowFX renders its stack with immediate-mode `Graphics.Blit` calls. That is exactly how the
+Built-in Render Pipeline expects post-processing to work, but URP and HDRP record their work into
+command buffers that execute later, so the adapters have to flush around the stack instead of
+recording into it. They are usable for stills and simple setups, and they are not production-ready.
+
+Known limitations on URP and HDRP:
+
+- **No RenderGraph path.** URP 17 (Unity 6) routes rendering through RenderGraph, where
+  `ScriptableRenderPass.Execute` and `cameraColorTargetHandle` are unavailable. The renderer feature
+  requires URP 14–16 with Compatibility Mode.
+- **Pass ordering is not guaranteed.** The stack is flushed around, not merged into, the host
+  pipeline's command buffer.
+- **Edge Outline normals and Motion & Datamosh vectors are degraded.** CrowFX reads URP's prepass
+  buffers where present; HDRP does not publish equivalents under names CrowFX can read. Both stages
+  fall back to depth-only detection and log a warning rather than producing incorrect output.
+  Depth Mask is unaffected, since `_CameraDepthTexture` is common to all three pipelines.
+
+Everything else — sampling, grading, quantization, palette, dithering, bleed, ghosting, sharpening,
+tape, composite, CRT and LCD — does not read scene buffers and behaves identically on all three.
+
+These adapters will be rebuilt on command buffers and `RTHandle` operations, with a dedicated
+RenderGraph path for URP 17+.
 
 ## Installation
 
@@ -84,7 +122,9 @@ Download a `.unitypackage` from [Releases](https://github.com/Luci0n/CrowFX-Unit
 3. Select **Apply** to commit a preview. Applying a full-stack look requires confirmation because it replaces all effect settings.
 4. Save reusable configurations as `CrowFXProfile` or `CrowFXPresetAsset` assets.
 
-For URP, add `CrowFXRendererFeature` to the active renderer. For HDRP, register `CrowFXCustomPostProcess` in the HDRP custom post-process list and add it to a Volume.
+On the experimental URP path, add `CrowFXRendererFeature` to the active renderer. On the experimental
+HDRP path, register `CrowFXCustomPostProcess` in the HDRP custom post-process list and add it to a
+Volume. Read [what "experimental" means](#what-experimental-means-here) first.
 
 <p align="center">
   <img width="610" alt="CrowFX 2.0 Unity inspector showing workflow controls and effect sections" src="Documentation/Images/crowfx-inspector-top.png" /><br />
@@ -95,7 +135,7 @@ For URP, add `CrowFXRendererFeature` to the active renderer. For HDRP, register 
 
 | Effect | Capabilities |
 |---|---|
-| Sampling & Grid | Pixel scaling, virtual resolution, aspect-aware sampling |
+| Sampling & Grid | Pixel scaling, virtual resolution, aspect-aware sampling, area-averaged downsampling |
 | Pre-Grade | Exposure, endpoint-preserving contrast, gamma, saturation, color filter |
 | Lens & Sensor | Radial distortion, lateral aberration, vignette, bloom, rolling shutter, sensor defects |
 | Film | Grain, halation, gate weave, dust, scratches, flicker |
@@ -128,7 +168,16 @@ The Look Library contains eight looks in each category:
 - Color & Experimental
 - Research & Analysis
 
-Looks can be searched by name, purpose, or active-stage recipe. Preview is non-destructive; stopping a preview restores the complete previous stack. Favorites, category selection, search, amount, and the selected look persist between inspector sessions.
+Pick one category, or choose **All Looks** to browse every category at once under collapsible headers.
+Looks can be searched by name, purpose, or active-stage recipe, and each look's recipe is derived from
+its own settings rather than authored by hand. Preview is non-destructive; stopping a preview restores
+the complete previous stack.
+
+**Bookmark** adds a look to a personal shortlist. The `Bookmarks` filter then shows every bookmarked
+look across all categories and custom asset looks. Bookmarks are stored per machine and write nothing
+to disk — `Save Current as New Look` and `Update Asset from Current Controls` create and modify preset
+assets, and `Delete Look` removes a custom one. Bookmarks, category selection, search, amount,
+collapsed groups, and the selected look persist between inspector sessions.
 
 ## Profiles and custom presets
 
@@ -148,18 +197,28 @@ Sampling → Grade → Lens/Sensor → Film → Channel/Temporal → Quantizatio
 → Digital Video → VHS → Composite → CRT/LCD → Stack Masks → Presentation
 ```
 
-VHS and composite stages operate in a gamma-encoded signal domain. Creative stages retain HDR headroom where supported. Temporal history is captured before transport and display simulation so tape and display artifacts do not recursively accumulate.
+VHS, composite, CRT and LCD stages operate in a gamma-encoded signal domain, because scanlines,
+phosphor masks and subpixel structure scale encoded drive values rather than radiometric intensity.
+Creative stages retain HDR headroom where supported. Temporal history is captured before transport
+and display simulation so tape and display artifacts do not recursively accumulate.
+
+Set **Sampling & Grid > Sampling Filter** to `Box` when pixelating heavily. Point sampling takes one
+texel per destination cell, so thin geometry and specular highlights fall between sample points and
+crawl as the camera moves. `Box` averages every source texel a cell covers and removes that shimmer
+at its source.
 
 ## Performance and validation
 
 - Low, Balanced, and Reference quality tiers cap expensive history, smear, and palette operations.
 - Ghost and datamosh buffers have independent resolution controls.
 - Scanlines and phosphor masks fade safely when the output cannot resolve them.
-- `Tools > CrowFX > Validate Installation` checks all required runtime shaders.
-- Build validation reports missing or stripped shaders before creating a player.
+- `Tools > CrowFX > Validate Installation` checks that every runtime shader resolves and is protected against stripping.
+- Build validation fails on missing shaders and warns when shaders are unregistered and therefore strippable.
 - `Tools > CrowFX > Generate Calibration Chart` creates a reference image for evaluating tone, resolution, and color behavior.
 
-Projects with aggressive shader stripping should keep the CrowFX shader folder or add the reported hidden shaders to **Always Included Shaders**.
+Every CrowFX shader is `Hidden/` and resolved by name at runtime, so nothing in the scene graph keeps
+it alive and shader stripping can remove it from a player. When that happens the affected stage
+renders as a passthrough rather than erroring. Registering the shaders once prevents this.
 
 ## More examples
 

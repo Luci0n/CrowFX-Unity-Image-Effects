@@ -16,29 +16,33 @@ Shader "Hidden/CrowFX/Helpers/GhostComposite"
         {
             CGPROGRAM
             #pragma target 3.0
-            #pragma vertex vert_img
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+            #pragma vertex CrowFX_Vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            // Include paths resolve relative to this shader, and this is the one stage that
+            // lives outside Stages/.
+            #include "../Stages/CE_Stereo.cginc"
 
-            sampler2D _MainTex;
+            CROWFX_DECLARE_SCREEN_TEX(_MainTex)
 
             // History textures (newest -> oldest as bound by C#)
-            sampler2D _Hist0;
-            sampler2D _Hist1;
-            sampler2D _Hist2;
-            sampler2D _Hist3;
-            sampler2D _Hist4;
-            sampler2D _Hist5;
-            sampler2D _Hist6;
-            sampler2D _Hist7;
-            sampler2D _Hist8;
-            sampler2D _Hist9;
-            sampler2D _Hist10;
-            sampler2D _Hist11;
-            sampler2D _Hist12;
-            sampler2D _Hist13;
-            sampler2D _Hist14;
-            sampler2D _Hist15;
+            CROWFX_DECLARE_SCREEN_TEX(_Hist0)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist1)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist2)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist3)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist4)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist5)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist6)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist7)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist8)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist9)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist10)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist11)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist12)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist13)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist14)
+            CROWFX_DECLARE_SCREEN_TEX(_Hist15)
 
             int _Count;
             float _WeightCurve;
@@ -46,26 +50,27 @@ Shader "Hidden/CrowFX/Helpers/GhostComposite"
 
             float3 SampleHist(int idx, float2 uv)
             {
-                if (idx == 0)  return tex2D(_Hist0,  uv).rgb;
-                if (idx == 1)  return tex2D(_Hist1,  uv).rgb;
-                if (idx == 2)  return tex2D(_Hist2,  uv).rgb;
-                if (idx == 3)  return tex2D(_Hist3,  uv).rgb;
-                if (idx == 4)  return tex2D(_Hist4,  uv).rgb;
-                if (idx == 5)  return tex2D(_Hist5,  uv).rgb;
-                if (idx == 6)  return tex2D(_Hist6,  uv).rgb;
-                if (idx == 7)  return tex2D(_Hist7,  uv).rgb;
-                if (idx == 8)  return tex2D(_Hist8,  uv).rgb;
-                if (idx == 9)  return tex2D(_Hist9,  uv).rgb;
-                if (idx == 10) return tex2D(_Hist10, uv).rgb;
-                if (idx == 11) return tex2D(_Hist11, uv).rgb;
-                if (idx == 12) return tex2D(_Hist12, uv).rgb;
-                if (idx == 13) return tex2D(_Hist13, uv).rgb;
-                if (idx == 14) return tex2D(_Hist14, uv).rgb;
-                return tex2D(_Hist15, uv).rgb;
+                if (idx == 0)  return CROWFX_SAMPLE_SCREEN(_Hist0,  uv).rgb;
+                if (idx == 1)  return CROWFX_SAMPLE_SCREEN(_Hist1,  uv).rgb;
+                if (idx == 2)  return CROWFX_SAMPLE_SCREEN(_Hist2,  uv).rgb;
+                if (idx == 3)  return CROWFX_SAMPLE_SCREEN(_Hist3,  uv).rgb;
+                if (idx == 4)  return CROWFX_SAMPLE_SCREEN(_Hist4,  uv).rgb;
+                if (idx == 5)  return CROWFX_SAMPLE_SCREEN(_Hist5,  uv).rgb;
+                if (idx == 6)  return CROWFX_SAMPLE_SCREEN(_Hist6,  uv).rgb;
+                if (idx == 7)  return CROWFX_SAMPLE_SCREEN(_Hist7,  uv).rgb;
+                if (idx == 8)  return CROWFX_SAMPLE_SCREEN(_Hist8,  uv).rgb;
+                if (idx == 9)  return CROWFX_SAMPLE_SCREEN(_Hist9,  uv).rgb;
+                if (idx == 10) return CROWFX_SAMPLE_SCREEN(_Hist10, uv).rgb;
+                if (idx == 11) return CROWFX_SAMPLE_SCREEN(_Hist11, uv).rgb;
+                if (idx == 12) return CROWFX_SAMPLE_SCREEN(_Hist12, uv).rgb;
+                if (idx == 13) return CROWFX_SAMPLE_SCREEN(_Hist13, uv).rgb;
+                if (idx == 14) return CROWFX_SAMPLE_SCREEN(_Hist14, uv).rgb;
+                return CROWFX_SAMPLE_SCREEN(_Hist15, uv).rgb;
             }
 
-            float4 frag(v2f_img i) : SV_Target
+            float4 frag(CrowFX_V2F i) : SV_Target
             {
+                CROWFX_SETUP_STEREO(i);
                 int count = clamp(_Count, 0, 16);
 
                 // If no history, output black (C# will avoid using it once we seed)
