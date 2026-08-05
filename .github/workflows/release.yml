@@ -18,6 +18,12 @@ on:
         description: Version to release. Leave empty to use the newest CHANGELOG.md entry.
         required: false
         type: string
+      highlights:
+        description: >
+          Markdown bullets for a Highlights section. Leave empty to publish the whole
+          changelog section instead.
+        required: false
+        type: string
       dry_run:
         description: Build and validate without tagging, pushing, or publishing.
         required: false
@@ -87,6 +93,10 @@ jobs:
       - name: Report what a dry run would have published
         if: ${{ inputs.dry_run }}
         shell: bash
+        env:
+          # See the publish step: markdown goes through the environment, not the script.
+          HIGHLIGHTS: ${{ inputs.highlights }}
+          CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
         run: |
           {
             echo "## Dry run: $TAG"
@@ -97,13 +107,15 @@ jobs:
             echo ""
             echo "### Release notes that would be used"
             echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
 
-          # Quoted heredoc, never an echo: the notes are markdown and contain backticks,
-          # which bash would run as command substitution inside double quotes.
-          cat >> "$GITHUB_STEP_SUMMARY" <<'NOTES'
-          ${{ steps.changelog.outputs.notes }}
-          NOTES
+            if [ -n "$HIGHLIGHTS" ]; then
+              echo "## Highlights"
+              echo ""
+              printf '%s\n' "$HIGHLIGHTS"
+            else
+              printf '%s\n' "$CHANGELOG_NOTES"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the dry-run package for inspection
         if: ${{ inputs.dry_run }}
@@ -126,17 +138,32 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
+          # Passed as environment values, never interpolated into the script body.
+          # Both are markdown containing backticks, which bash would run as command
+          # substitution the moment they landed inside double quotes.
+          HIGHLIGHTS: ${{ inputs.highlights }}
+          CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
         shell: bash
         run: |
           NOTES_FILE="$(mktemp)"
-          cat > "$NOTES_FILE" <<'NOTES'
-          ${{ steps.changelog.outputs.notes }}
-          NOTES
+
+          if [ -n "$HIGHLIGHTS" ]; then
+            {
+              echo "## Highlights"
+              echo ""
+              printf '%s\n' "$HIGHLIGHTS"
+            } > "$NOTES_FILE"
+          else
+            printf '%s\n' "$CHANGELOG_NOTES" > "$NOTES_FILE"
+          fi
 
           {
             echo ""
             echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${TAG}/CHANGELOG.md) for details."
           } >> "$NOTES_FILE"
+
+          echo "Release notes:"
+          cat "$NOTES_FILE"
 
           gh release create "$TAG" \
             --title "CrowFX $TAG" \
