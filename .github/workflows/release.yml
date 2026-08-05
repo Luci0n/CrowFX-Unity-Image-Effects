@@ -44,6 +44,16 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # Its own step because both the version commit and the annotated tag need an
+      # identity, and the commit step exits early when package.json already matches.
+      # Configuring it there left tagging to fail with "empty ident name" on exactly
+      # the releases where the version was already correct.
+      - name: Configure the committer identity
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Read version and notes from the changelog
         id: changelog
         shell: pwsh
@@ -77,8 +87,6 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CrowFX/package.json
           git commit -m "Sync package.json to ${TAG}"
 
