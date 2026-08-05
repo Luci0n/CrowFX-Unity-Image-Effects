@@ -1,7 +1,11 @@
 {
     "name": "CrowFX.URP",
     "rootNamespace": "CrowFX.Integrations.URP",
-    "references": ["CrowFX", "Unity.RenderPipelines.Universal.Runtime"],
+    "references": [
+        "CrowFX",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
     "autoReferenced": true,
     "defineConstraints": ["CROWFX_URP"],
     "versionDefines": [

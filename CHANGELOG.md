@@ -4,6 +4,22 @@ All notable changes to CrowFX are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Pipeline setup detection in the inspector. On URP it reports a missing renderer feature, an injection point that cannot reach the screen, and an intermediate texture mode CrowFX cannot read; on HDRP it reports a custom post process that was never registered or sits in the wrong injection list. Each carries a button that reveals the asset to fix
+- Scene view rendering as an opt-in toggle on the URP renderer feature
+
+### Fixed
+
+- The URP and HDRP integration assemblies failed to compile, so neither adapter existed: `RTHandle`, `Blitter`, and the volume parameter types live in Core RP, which neither assembly definition referenced. On URP this left no entry in Add Renderer Feature at all
+- The URP pass read the camera colour target outside a render pass and then cached it, so it wrote into an attachment URP had already swapped away from, and never flushed the queued work its immediate-mode stack depended on. Both produced an unchanged frame with an empty console
+- The URP renderer feature defaulted to injecting after post-processing, where its output could be discarded
+- A stereo pipeline hands the stack a texture array, which every stage then bound to its 2D sampler properties, logging "Dimensions must match" for `_OriginalTex`, `_HistoryTex`, and `_PrevTex` once per frame. The source is now flattened to 2D once at the top of the stack, covering intermediates, ghost and motion history, masks, and presentation. Stereo callers get a single eye
+
+### Changed
+
+- Moved the technical reference into `Documentation/`, split across inspector, effects, looks and presets, pipelines, and performance pages, leaving the README as a visual overview with installation and a quick start
+
 ## [2.1.0] - 2026-08-04
 
 ### Added

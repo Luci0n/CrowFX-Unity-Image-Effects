@@ -903,6 +903,32 @@ namespace CrowFX
             }
 
             EnsureDepthModeIfNeeded();
+
+            // A stereo pipeline hands the stack a texture array. Every stage below is an
+            // immediate-mode Graphics.Blit whose shaders sample 2D, because Graphics.Blit never
+            // establishes the eye state that would compile the array variants. Binding an array
+            // to _OriginalTex, _HistoryTex or _PrevTex then fails with "Dimensions must match",
+            // once per property per frame.
+            //
+            // Flattening once here rather than at each call site covers every buffer derived from
+            // the source: the ping-pong intermediates, ghost and motion history, the stack masks,
+            // and the original bound at present. Only the first slice is copied, so a stereo
+            // caller gets one eye -- see Documentation/Pipelines.md.
+            RenderTexture flattened = null;
+            if (src.dimension != TextureDimension.Tex2D)
+            {
+                var flatDesc = src.descriptor;
+                flatDesc.dimension = TextureDimension.Tex2D;
+                flatDesc.volumeDepth = 1;
+                flatDesc.vrUsage = VRTextureUsage.None;
+                flatDesc.depthBufferBits = 0;
+                flatDesc.msaaSamples = 1;
+
+                flattened = RenderTexture.GetTemporary(flatDesc);
+                Graphics.Blit(src, flattened);
+                src = flattened;
+            }
+
             EnsureGhostResources(src);
             EnsureMotionHistory(src);
 
@@ -974,6 +1000,7 @@ namespace CrowFX
             {
                 if (a != null) RenderTexture.ReleaseTemporary(a);
                 if (b != null) RenderTexture.ReleaseTemporary(b);
+                if (flattened != null) RenderTexture.ReleaseTemporary(flattened);
                 Profiler.EndSample();
             }
         }

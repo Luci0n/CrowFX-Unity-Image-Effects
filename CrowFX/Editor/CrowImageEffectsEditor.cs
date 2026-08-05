@@ -1357,6 +1357,7 @@ namespace CrowFX.EditorTools
                 EditorGUILayout.LabelField(summary, CrowFxEditorUI.Styles.SummaryText);
                 GUILayout.Space(4);
                 DrawVersionStatus();
+                DrawPipelineSetupHint();
 
                 if (IsMultiEditing)
                 {
@@ -4534,6 +4535,35 @@ namespace CrowFX.EditorTools
             float totalBytes = width * height * historyBuffers * 4f;
 
             return totalBytes / (1024f * 1024f);
+        }
+
+        /// <summary>
+        /// Reports URP setup problems at the top of the inspector, where a pipeline-level fault
+        /// belongs. Each of these otherwise produces an unchanged image and an empty console,
+        /// which is the worst kind of failure to diagnose.
+        /// </summary>
+        private void DrawPipelineSetupHint()
+        {
+            var problem = CrowFXPipelineSetup.Check();
+            if (!problem.Exists) return;
+
+            GUILayout.Space(4);
+
+            // Error when the stack cannot render at all, warning when it depends on the rest of
+            // the setup.
+            var severity = problem.IsError
+                ? CrowFxEditorUI.HintType.Error
+                : CrowFxEditorUI.HintType.Warning;
+
+            if (problem.PingTarget == null)
+            {
+                CrowFxEditorUI.Hint(problem.Message, severity);
+                return;
+            }
+
+            var target = problem.PingTarget;
+            DrawActionHint(problem.Message, problem.ActionLabel,
+                () => CrowFXPipelineSetup.Reveal(target), severity);
         }
 
         private void DrawActionHint(string message, string actionLabel, Action action, CrowFxEditorUI.HintType type = CrowFxEditorUI.HintType.Info, bool actionEnabled = true)
