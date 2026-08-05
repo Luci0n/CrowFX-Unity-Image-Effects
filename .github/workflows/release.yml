@@ -46,7 +46,7 @@ jobs:
 
     steps:
       - name: Check out main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload the dry-run package for inspection
         if: ${{ inputs.dry_run }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.package-name }}
           path: ${{ steps.package.outputs.package-path }}
