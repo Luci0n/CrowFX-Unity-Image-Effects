@@ -1,0 +1,45 @@
+# Fails when CrowFX/package.json and the newest CHANGELOG.md version disagree.
+#
+# The release workflow would fix this on its own, but only at the moment of release.
+# Catching it on push means the mismatch surfaces while the change is still fresh,
+# rather than as a surprise commit appearing under a tag.
+
+name: Verify Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - CHANGELOG.md
+      - CrowFX/package.json
+  pull_request:
+    paths:
+      - CHANGELOG.md
+      - CrowFX/package.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare package.json against the changelog
+        shell: pwsh
+        run: |
+          $changelog = ./.github/scripts/Get-ChangelogRelease.ps1
+          $package = Get-Content CrowFX/package.json -Raw | ConvertFrom-Json
+
+          Write-Host "CHANGELOG.md newest version : $($changelog.Version)"
+          Write-Host "CrowFX/package.json version : $($package.version)"
+
+          if ($changelog.Version -ne $package.version) {
+              Write-Host "::error::CrowFX/package.json says $($package.version) but the newest CHANGELOG.md entry is $($changelog.Version). Update whichever is wrong."
+              exit 1
+          }
+
+          Write-Host "Versions agree."

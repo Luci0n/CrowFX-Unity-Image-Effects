@@ -1,0 +1,144 @@
+# Cuts a release from CHANGELOG.md.
+#
+# The version is never typed into this workflow: it comes from the topmost versioned
+# heading in CHANGELOG.md, which is the one place a release number is written by hand.
+#
+# Order matters, and it is the reason this replaced the old release-triggered workflow.
+# package.json is synced and committed FIRST, and the tag is then created on that
+# commit. Reacting to a published release could never do that -- by then the tag was
+# frozen and the package asset already uploaded, so v1.1.1 shipped a package.json that
+# still said 1.1.0.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release. Leave empty to use the newest CHANGELOG.md entry.
+        required: false
+        type: string
+      dry_run:
+        description: Build and validate without tagging, pushing, or publishing.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read version and notes from the changelog
+        id: changelog
+        shell: pwsh
+        run: |
+          ./.github/scripts/Get-ChangelogRelease.ps1 `
+            -Version "${{ inputs.version }}" `
+            -EmitGitHubOutput
+
+      - name: Refuse to reuse an existing tag
+        shell: bash
+        run: |
+          TAG="v${{ steps.changelog.outputs.version }}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Add a new CHANGELOG.md section before releasing."
+            exit 1
+          fi
+
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Releasing $TAG"
+
+      - name: Sync package.json to the release version
+        shell: pwsh
+        run: ./.github/scripts/Sync-PackageVersionFromTag.ps1 -Tag $env:TAG
+
+      - name: Commit the synced version
+        shell: bash
+        run: |
+          if git diff --quiet -- CrowFX/package.json; then
+            echo "package.json already matched $TAG."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CrowFX/package.json
+          git commit -m "Sync package.json to ${TAG}"
+
+      - name: Build the unitypackage
+        id: package
+        shell: pwsh
+        run: |
+          ./.github/scripts/New-UnityPackage.ps1 `
+            -Version "${{ steps.changelog.outputs.version }}" `
+            -OutputDirectory "dist"
+
+      - name: Report what a dry run would have published
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          {
+            echo "## Dry run: $TAG"
+            echo ""
+            echo "Nothing was tagged, pushed, or published."
+            echo ""
+            echo "Package: ${{ steps.package.outputs.package-name }}"
+            echo ""
+            echo "### Release notes that would be used"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Quoted heredoc, never an echo: the notes are markdown and contain backticks,
+          # which bash would run as command substitution inside double quotes.
+          cat >> "$GITHUB_STEP_SUMMARY" <<'NOTES'
+          ${{ steps.changelog.outputs.notes }}
+          NOTES
+
+      - name: Upload the dry-run package for inspection
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.package-name }}
+          path: ${{ steps.package.outputs.package-path }}
+
+      - name: Push the version commit and tag it
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          # The tag is created here, after the package.json commit, so the tag and the
+          # package asset both carry the released version.
+          git tag -a "$TAG" -m "CrowFX $TAG"
+          git push origin HEAD:main
+          git push origin "$TAG"
+
+      - name: Publish the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<'NOTES'
+          ${{ steps.changelog.outputs.notes }}
+          NOTES
+
+          {
+            echo ""
+            echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${TAG}/CHANGELOG.md) for details."
+          } >> "$NOTES_FILE"
+
+          gh release create "$TAG" \
+            --title "CrowFX $TAG" \
+            --notes-file "$NOTES_FILE" \
+            "${{ steps.package.outputs.package-path }}"
