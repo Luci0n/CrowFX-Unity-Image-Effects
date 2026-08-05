@@ -4,6 +4,8 @@ All notable changes to CrowFX are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-05
+
 ### Added
 
 - Pipeline setup detection in the inspector. On URP it reports a missing renderer feature, an injection point that cannot reach the screen, and an intermediate texture mode CrowFX cannot read; on HDRP it reports a custom post process that was never registered or sits in the wrong injection list. Each carries a button that reveals the asset to fix
