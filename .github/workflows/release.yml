@@ -1,21 +1,28 @@
-# Cuts a release from CHANGELOG.md.
+# Cuts a release with no hand-edited version numbers anywhere.
 #
-# The version is never typed into this workflow: it comes from the topmost versioned
-# heading in CHANGELOG.md, which is the one place a release number is written by hand.
+# The only thing a person writes is the changelog prose, accumulated under
+# [Unreleased] during normal work. This workflow decides the number, stamps the date,
+# updates package.json, commits both, tags that commit, builds the package, and
+# publishes. Nothing is typed twice, so nothing can disagree.
 #
-# Order matters, and it is the reason this replaced the old release-triggered workflow.
-# package.json is synced and committed FIRST, and the tag is then created on that
-# commit. Reacting to a published release could never do that -- by then the tag was
-# frozen and the package asset already uploaded, so v1.1.1 shipped a package.json that
-# still said 1.1.0.
+# Order matters, and it is why this replaced the old release-triggered workflow.
+# The version files are committed FIRST and the tag is created on that commit.
+# Reacting to a published release could never do that -- by then the tag was frozen
+# and the asset uploaded, so v1.1.1 shipped a package.json that still said 1.1.0.
 
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: Which part of the version to increase.
+        required: true
+        default: minor
+        type: choice
+        options: [patch, minor, major]
       version:
-        description: Version to release. Leave empty to use the newest CHANGELOG.md entry.
+        description: Exact version, e.g. 2.2.0. Overrides the bump choice.
         required: false
         type: string
       highlights:
@@ -25,7 +32,7 @@ on:
         required: false
         type: string
       dry_run:
-        description: Build and validate without tagging, pushing, or publishing.
+        description: Build and validate without committing, tagging, or publishing.
         required: false
         default: false
         type: boolean
@@ -45,30 +52,31 @@ jobs:
           fetch-depth: 0
 
       # Its own step because both the version commit and the annotated tag need an
-      # identity, and the commit step exits early when package.json already matches.
-      # Configuring it there left tagging to fail with "empty ident name" on exactly
-      # the releases where the version was already correct.
+      # identity. Configuring it inside the commit step left tagging to fail with
+      # "empty ident name" whenever that step had nothing to commit.
       - name: Configure the committer identity
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Read version and notes from the changelog
-        id: changelog
+      # Refuses when [Unreleased] is empty, so a release always carries notes.
+      - name: Promote the Unreleased section
+        id: promote
         shell: pwsh
         run: |
-          ./.github/scripts/Get-ChangelogRelease.ps1 `
+          ./.github/scripts/Promote-ChangelogUnreleased.ps1 `
+            -Bump "${{ inputs.bump }}" `
             -Version "${{ inputs.version }}" `
             -EmitGitHubOutput
 
       - name: Refuse to reuse an existing tag
         shell: bash
         run: |
-          TAG="v${{ steps.changelog.outputs.version }}"
+          TAG="v${{ steps.promote.outputs.version }}"
 
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists. Add a new CHANGELOG.md section before releasing."
+            echo "::error::Tag $TAG already exists."
             exit 1
           fi
 
@@ -79,37 +87,49 @@ jobs:
         shell: pwsh
         run: ./.github/scripts/Sync-PackageVersionFromTag.ps1 -Tag $env:TAG
 
-      - name: Commit the synced version
+      - name: Read the release notes back
+        id: changelog
+        shell: pwsh
+        run: |
+          ./.github/scripts/Get-ChangelogRelease.ps1 `
+            -Version "${{ steps.promote.outputs.version }}" `
+            -EmitGitHubOutput
+
+      - name: Commit the version files
+        if: ${{ !inputs.dry_run }}
         shell: bash
         run: |
-          if git diff --quiet -- CrowFX/package.json; then
-            echo "package.json already matched $TAG."
-            exit 0
+          git add CHANGELOG.md CrowFX/package.json
+
+          if git diff --cached --quiet; then
+            echo "::error::Nothing to commit. The changelog and package.json were already at $TAG."
+            exit 1
           fi
 
-          git add CrowFX/package.json
-          git commit -m "Sync package.json to ${TAG}"
+          git commit -m "Release CrowFX ${{ steps.promote.outputs.version }}"
 
       - name: Build the unitypackage
         id: package
         shell: pwsh
         run: |
           ./.github/scripts/New-UnityPackage.ps1 `
-            -Version "${{ steps.changelog.outputs.version }}" `
+            -Version "${{ steps.promote.outputs.version }}" `
             -OutputDirectory "dist"
 
       - name: Report what a dry run would have published
         if: ${{ inputs.dry_run }}
-        shell: bash
         env:
-          # See the publish step: markdown goes through the environment, not the script.
+          # Markdown reaches the script through the environment, never through
+          # expression interpolation: it contains backticks, which bash would run as
+          # command substitution inside double quotes.
           HIGHLIGHTS: ${{ inputs.highlights }}
           CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
+        shell: bash
         run: |
           {
             echo "## Dry run: $TAG"
             echo ""
-            echo "Nothing was tagged, pushed, or published."
+            echo "Nothing was committed, tagged, or published."
             echo ""
             echo "Package: ${{ steps.package.outputs.package-name }}"
             echo ""
@@ -123,6 +143,13 @@ jobs:
             else
               printf '%s\n' "$CHANGELOG_NOTES"
             fi
+
+            echo ""
+            echo "### Changelog diff that would be committed"
+            echo ""
+            echo '```diff'
+            git --no-pager diff -- CHANGELOG.md CrowFX/package.json
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the dry-run package for inspection
@@ -136,8 +163,8 @@ jobs:
         if: ${{ !inputs.dry_run }}
         shell: bash
         run: |
-          # The tag is created here, after the package.json commit, so the tag and the
-          # package asset both carry the released version.
+          # Tagged here, after the version commit, so the tag and the packaged
+          # asset both carry the released version.
           git tag -a "$TAG" -m "CrowFX $TAG"
           git push origin HEAD:main
           git push origin "$TAG"
@@ -146,9 +173,6 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-          # Passed as environment values, never interpolated into the script body.
-          # Both are markdown containing backticks, which bash would run as command
-          # substitution the moment they landed inside double quotes.
           HIGHLIGHTS: ${{ inputs.highlights }}
           CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
         shell: bash
